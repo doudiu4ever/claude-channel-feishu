@@ -10,7 +10,9 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync } from 'f
 import { homedir } from 'os'
 import { join, dirname } from 'path'
 
-const ACCESS_FILE = process.env.FEISHU_ACCESS_FILE ?? './access.json'
+const ACCESS_FILE =
+  process.env.FEISHU_ACCESS_FILE ??
+  join(homedir(), '.claude', 'channels', 'feishu', 'access.json')
 const CONFIG_FILE =
   process.env.FEISHU_CONFIG_FILE ??
   join(homedir(), '.claude', 'channels', 'feishu', 'config.json')
@@ -42,8 +44,10 @@ let client: lark.Client | null = null
 let wsClient: lark.WSClient | null = null
 
 type Access = { allowFrom: string[] }
-const saveAccess = (access: Access) =>
+const saveAccess = (access: Access) => {
+  mkdirSync(dirname(ACCESS_FILE), { recursive: true })
   writeFileSync(ACCESS_FILE, JSON.stringify(access, null, 2) + '\n')
+}
 const loadAccess = (): Access => {
   if (!existsSync(ACCESS_FILE)) saveAccess({ allowFrom: [] })
   return JSON.parse(readFileSync(ACCESS_FILE, 'utf8'))

@@ -1,8 +1,11 @@
 {
   "mcpServers": {
     "feishu": {
-      "command": "npx",
-      "args": ["tsx", "./server.ts"]
+      "command": "bash",
+      "args": [
+        "-c",
+        "cd \"${CLAUDE_PLUGIN_ROOT:-.}\" && { [ -d node_modules ] || npm install --silent --no-audit --no-fund --prefer-offline; } && exec ./node_modules/.bin/tsx server.ts"
+      ]
     }
   }
 }

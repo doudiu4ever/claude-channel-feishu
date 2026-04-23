@@ -1,0 +1,15 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "feishu-plugins",
+  "description": "Single-plugin marketplace shipping the Feishu/Lark channel for Claude Code.",
+  "owner": {
+    "name": "doudiu4ever"
+  },
+  "plugins": [
+    {
+      "name": "feishu",
+      "description": "Feishu/Lark channel for Claude Code.",
+      "source": "."
+    }
+  ]
+}

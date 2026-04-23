@@ -18,7 +18,19 @@ When in doubt about behavior (pairing flow, access control, permission relay
 edge cases), read that `server.ts` first. We are deliberately mirroring its
 architecture so lessons there transfer.
 
-## Current state (v0.1.0 skeleton)
+## Packaging
+
+Repo is a **single-plugin marketplace**:
+- `.claude-plugin/plugin.json` — plugin metadata (name=`feishu`).
+- `.claude-plugin/marketplace.json` — declares one plugin (`source: "."`)
+  under marketplace name `feishu-plugins`. Lets users install the plugin
+  directly from this repo via `/plugin marketplace add <git-url>`.
+
+Installed plugins live at `~/.claude/plugins/…/feishu/`. The `.mcp.json`
+launch wrapper uses `${CLAUDE_PLUGIN_ROOT:-.}` so the same file works both
+when installed as a plugin and when running straight from a dev clone.
+
+## Current state (v0.1.0)
 
 Done:
 - MCP server with `claude/channel` + `claude/channel/permission` capabilities
@@ -28,6 +40,7 @@ Done:
 - Permission relay: outbound sends prompt to allowlisted users; inbound
   `yes <id>` / `no <id>` parsed into verdict
 - Sender gating by `sender.sender_id.open_id` against `access.json`
+  (default location `~/.claude/channels/feishu/access.json`, auto-created)
 - Pairing flow: unauthorized senders receive a 6-char code; `pair` tool
   claims the code and appends the open_id to `access.json`. Codes are
   in-memory, 10-min TTL, one active code per open_id (new message replaces).
@@ -36,6 +49,10 @@ Done:
   WSClient in-process. No restart required on first configure.
   `$FEISHU_APP_ID` + `$FEISHU_APP_SECRET` from the environment still
   override the config file if set.
+- Packaged as a Claude Code plugin with a self-contained marketplace file,
+  so `/plugin marketplace add <this-repo>` + `/plugin install feishu@feishu-plugins`
+  works. Dependencies (`npm install`) are installed lazily on first launch
+  by the `.mcp.json` bash wrapper.
 
 Deferred (add incrementally, keep parity with telegram channel):
 - Image / file attachments (inbound + outbound)
@@ -72,32 +89,36 @@ target local files if/when more files are added.
 - Event subscription set to **long connection** mode
 - Subscribed: `im.message.receive_v1`
 - Scopes: `im:message`, `im:message:send_as_bot`, `im:chat:readonly`
-- `access.json` is **gitignored** (contains personal open_ids); the repo
-  ships `access.example.json` as a template. On first run the server
-  auto-creates `access.json` with `{"allowFrom": []}` if missing — the
-  bootstrap admin then pairs themselves via the pairing flow below,
-  no manual edit needed.
 
-`.mcp.json` is checked in and contains **no secrets** — just the command
-to launch the server. Credentials are collected at runtime via the
-`configure` tool and stored in `~/.claude/channels/feishu/config.json`
-(mode 0600). Setting `FEISHU_APP_ID` / `FEISHU_APP_SECRET` in the shell
-environment bypasses the file (useful for CI or per-instance overrides).
+Runtime state lives under `~/.claude/channels/feishu/`:
+- `config.json` (0600) — written by the `configure` tool.
+- `access.json` — paired open_ids, auto-created empty.
+
+Both are outside the repo so plugin updates never touch them. Override
+paths via `FEISHU_CONFIG_FILE` / `FEISHU_ACCESS_FILE` env vars if needed.
+Env `FEISHU_APP_ID` / `FEISHU_APP_SECRET` bypass `config.json` entirely
+(useful for CI or per-instance).
 
 ## How to run
 
-Development / code work (no channel activation needed):
-```
-claude
-```
+Two modes, both require `--dangerously-load-development-channels` (research
+preview gate for channels not on Anthropic's approved allowlist).
 
-Actually exercising the channel end-to-end:
+**Dev mode (iterating on this repo):**
 ```
 claude --dangerously-load-development-channels server:feishu
 ```
+Reads the repo's `.mcp.json` directly; `cd` must be the clone root.
 
-The `--dangerously-load-development-channels` flag is required during the
-channel research preview for any channel not on Anthropic's approved allowlist.
+**Plugin mode (how end users install):**
+```
+# one-time, inside any claude session:
+/plugin marketplace add https://github.com/doudiu4ever/claude-channel-feishu.git
+/plugin install feishu@feishu-plugins
+
+# then relaunch:
+claude --dangerously-load-development-channels plugin:feishu@feishu-plugins
+```
 
 ## What success looks like for the next milestone
 
