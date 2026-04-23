@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "feishu": {
+      "command": "npx",
+      "args": ["tsx", "./server.ts"]
+    }
+  }
+}
