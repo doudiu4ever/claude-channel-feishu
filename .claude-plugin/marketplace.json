@@ -9,7 +9,7 @@
     {
       "name": "feishu",
       "description": "Feishu/Lark channel for Claude Code.",
-      "source": "."
+      "source": "./"
     }
   ]
 }
