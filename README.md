@@ -85,7 +85,15 @@ npm install
 claude --dangerously-load-development-channels server:feishu
 ```
 
-The `server:feishu` form reads the repo's `.mcp.json` directly — edits to `server.ts` take effect on each session restart.
+The `server:feishu` form reads the repo's `.mcp.json` directly. In dev mode the wrapper runs `tsx server.ts`, so edits to `server.ts` take effect on each session restart.
+
+Before publishing a change, rebuild the bundle that plugin-mode installs consume:
+
+```bash
+npm run build
+```
+
+`dist/server.mjs` is the self-contained bundle the plugin loads at runtime — no `npm install` required on the installer's side, which is what makes first-launch instant.
 
 ## Files
 

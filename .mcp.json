@@ -4,7 +4,7 @@
       "command": "bash",
       "args": [
         "-c",
-        "cd \"${CLAUDE_PLUGIN_ROOT:-.}\" && { [ -d node_modules ] || npm install --silent --no-audit --no-fund --prefer-offline; } && exec ./node_modules/.bin/tsx server.ts"
+        "if [ -n \"$CLAUDE_PLUGIN_ROOT\" ]; then cd \"$CLAUDE_PLUGIN_ROOT\" && exec node dist/server.mjs; else { [ -d node_modules ] || npm install --silent --no-audit --no-fund --prefer-offline; } && exec ./node_modules/.bin/tsx server.ts; fi"
       ]
     }
   }

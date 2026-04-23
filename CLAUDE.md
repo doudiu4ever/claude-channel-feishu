@@ -27,8 +27,16 @@ Repo is a **single-plugin marketplace**:
   directly from this repo via `/plugin marketplace add <git-url>`.
 
 Installed plugins live at `~/.claude/plugins/…/feishu/`. The `.mcp.json`
-launch wrapper uses `${CLAUDE_PLUGIN_ROOT:-.}` so the same file works both
-when installed as a plugin and when running straight from a dev clone.
+launch wrapper branches on `$CLAUDE_PLUGIN_ROOT`:
+- **Plugin mode** (`CLAUDE_PLUGIN_ROOT` set): `exec node dist/server.mjs` —
+  the self-contained esbuild bundle. Zero runtime deps, instant startup.
+  This is mandatory: without it, a first-launch `npm install` overruns
+  Claude's MCP handshake timeout and `/mcp` shows the server as failed.
+- **Dev mode** (no `CLAUDE_PLUGIN_ROOT`): lazy `npm install` + `tsx server.ts`
+  so edits to `server.ts` are live.
+
+Run `npm run build` before committing any `server.ts` change — the committed
+`dist/server.mjs` is what installed plugins actually execute.
 
 ## Current state (v0.1.0)
 
@@ -51,8 +59,8 @@ Done:
   override the config file if set.
 - Packaged as a Claude Code plugin with a self-contained marketplace file,
   so `/plugin marketplace add <this-repo>` + `/plugin install feishu@feishu-plugins`
-  works. Dependencies (`npm install`) are installed lazily on first launch
-  by the `.mcp.json` bash wrapper.
+  works. Plugin mode runs a prebuilt esbuild bundle (`dist/server.mjs`) so
+  first launch is instant — no `npm install` in the hot path.
 
 Deferred (add incrementally, keep parity with telegram channel):
 - Image / file attachments (inbound + outbound)
@@ -63,9 +71,10 @@ Deferred (add incrementally, keep parity with telegram channel):
 
 ## Runtime
 
-Node + `tsx` (user's machine does not have `bun`). Do not rewrite to Bun unless
-asked — the SDK works fine on Node, only the runner differs from the telegram
-reference.
+- Dev: Node + `tsx` (user's machine does not have `bun` — do not rewrite to Bun
+  unless asked; the SDK works fine on Node, only the runner differs from the
+  telegram reference).
+- Plugin mode: prebuilt esbuild bundle `dist/server.mjs` executed by plain `node`.
 
 ESM project (`"type": "module"`). Keep `.ts` extension on import specifiers that
 target local files if/when more files are added.
