@@ -62,10 +62,17 @@ Done:
   works. Plugin mode runs a prebuilt esbuild bundle (`dist/server.mjs`) so
   first launch is instant — no `npm install` in the hot path.
 
+- Interactive message cards for permission approval: Allow/Deny buttons
+  delivered via `msg_type: interactive`; click handled in-process through
+  the `card.action.trigger` callback registered on the same EventDispatcher
+  (long-connection, same WS as messages). Text fallback `yes/no <id>`
+  retained. Requires `card.action.trigger` subscribed under *回调订阅*
+  (separate tab from event subscription).
+
 Deferred (add incrementally, keep parity with telegram channel):
 - Image / file attachments (inbound + outbound)
-- Interactive message cards for permission approval AND for adding new
-  senders after the bootstrap admin is paired (currently text-only yes/no)
+- Interactive message cards for admitting new senders after the bootstrap
+  admin is paired (currently text-only `pair <code>`)
 - Group chat @-mention handling
 - `react`, `edit_message`, `download_attachment` tools
 

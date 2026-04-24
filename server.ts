@@ -223,19 +223,62 @@ const PermissionRequestSchema = z.object({
   }),
 })
 
+function buildPermissionCard(params: {
+  request_id: string
+  tool_name: string
+  description: string
+  input_preview: string
+}) {
+  const { request_id, tool_name, description, input_preview } = params
+  const body = [
+    `**Tool**: ${tool_name}`,
+    description ? description : '',
+    input_preview ? '```\n' + input_preview.slice(0, 400) + '\n```' : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+  return {
+    config: { wide_screen_mode: true },
+    header: {
+      template: 'orange',
+      title: { tag: 'plain_text', content: 'Claude permission request' },
+    },
+    elements: [
+      { tag: 'div', text: { tag: 'lark_md', content: body } },
+      {
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: 'Allow' },
+            type: 'primary',
+            value: { rid: request_id, d: 'allow' },
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: 'Deny' },
+            type: 'danger',
+            value: { rid: request_id, d: 'deny' },
+          },
+        ],
+      },
+    ],
+  }
+}
+
+const decidedRequests = new Set<string>()
+
 mcp.setNotificationHandler(PermissionRequestSchema, async ({ params }) => {
   if (!client) return
   const access = loadAccess()
-  const text =
-    `Claude wants to run ${params.tool_name}: ${params.description}\n\n` +
-    `Reply "yes ${params.request_id}" or "no ${params.request_id}"`
+  const card = buildPermissionCard(params)
   for (const open_id of access.allowFrom) {
     await client.im.message.create({
       params: { receive_id_type: 'open_id' },
       data: {
         receive_id: open_id,
-        msg_type: 'text',
-        content: JSON.stringify({ text }),
+        msg_type: 'interactive',
+        content: JSON.stringify(card),
       },
     })
   }
@@ -291,6 +334,37 @@ const eventDispatcher = new lark.EventDispatcher({ logger: stderrLogger }).regis
         },
       },
     })
+  },
+  'card.action.trigger': async data => {
+    const d = data as {
+      action?: { value?: { rid?: string; d?: 'allow' | 'deny' } }
+      operator?: { open_id?: string }
+    }
+    const rid = d.action?.value?.rid
+    const decision = d.action?.value?.d
+    const open_id = d.operator?.open_id ?? ''
+    if (!rid || !decision) return
+    const access = loadAccess()
+    if (!access.allowFrom.includes(open_id)) return
+
+    if (decidedRequests.has(rid)) {
+      return {
+        toast: { type: 'info', content: 'Already handled.' },
+      }
+    }
+    decidedRequests.add(rid)
+
+    await mcp.notification({
+      method: 'notifications/claude/channel/permission',
+      params: { request_id: rid, behavior: decision },
+    })
+
+    return {
+      toast: {
+        type: decision === 'allow' ? 'success' : 'warning',
+        content: decision === 'allow' ? 'Allowed.' : 'Denied.',
+      },
+    }
   },
 })
 

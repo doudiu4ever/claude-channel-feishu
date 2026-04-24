@@ -13,8 +13,8 @@ also be relayed to Feishu so you approve them remotely from your phone.
 - **Node 18+** (the server runs on `tsx`).
 - **Feishu 自建应用** with:
   - Bot capability enabled.
-  - Event subscription set to **long connection** (no public URL required).
-  - Subscribed event: `im.message.receive_v1`.
+  - **Event** subscription set to **long connection** (no public URL required), subscribed to `im.message.receive_v1`.
+  - **Callback** subscription (a separate tab under *Events and Callbacks*) also set to **long connection**, subscribed to `card.action.trigger` — this is what powers the Allow/Deny buttons for permission prompts. Without it the cards show error 200340 when tapped.
   - Scopes: `im:message`, `im:message:send_as_bot`, `im:chat:readonly`.
   - A **released** version (changes in the developer console take effect only after publishing).
 
@@ -72,7 +72,7 @@ Claude calls the `pair` tool, the bot DMs back "Paired.", and your `open_id` is 
 Once configured and paired:
 
 - **DM the bot** → the message appears in your terminal as a `<channel source="feishu" ...>` event. Claude can respond by calling the `reply` tool.
-- **Permission relay** — if Claude tries to run a tool that needs approval (e.g. `Bash`), the prompt is forwarded to allowlisted Feishu users. Reply `yes <id>` or `no <id>` from Feishu to approve/deny without touching the terminal.
+- **Permission relay** — if Claude tries to run a tool that needs approval (e.g. `Bash`), the prompt is forwarded to allowlisted Feishu users as an interactive card with **Allow** / **Deny** buttons. Tap one and the verdict goes back to Claude without touching the terminal. Text fallback `yes <id>` / `no <id>` still works.
 
 ## Development mode
 
