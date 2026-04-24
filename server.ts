@@ -43,6 +43,17 @@ function saveConfig(cfg: Config) {
 let client: lark.Client | null = null
 let wsClient: lark.WSClient | null = null
 
+// Feishu SDK defaults to stdout for info logs — but stdout is the MCP
+// JSON-RPC stream, so any non-protocol write corrupts it and Claude drops
+// the server. Route SDK logs to stderr instead.
+const stderrLogger = {
+  error: (...m: unknown[]) => process.stderr.write(`[feishu:error] ${m.join(' ')}\n`),
+  warn: (...m: unknown[]) => process.stderr.write(`[feishu:warn] ${m.join(' ')}\n`),
+  info: (...m: unknown[]) => process.stderr.write(`[feishu:info] ${m.join(' ')}\n`),
+  debug: () => {},
+  trace: () => {},
+}
+
 type Access = { allowFrom: string[] }
 const saveAccess = (access: Access) => {
   mkdirSync(dirname(ACCESS_FILE), { recursive: true })
@@ -232,7 +243,7 @@ mcp.setNotificationHandler(PermissionRequestSchema, async ({ params }) => {
 
 const PERM_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
 
-const eventDispatcher = new lark.EventDispatcher({}).register({
+const eventDispatcher = new lark.EventDispatcher({ logger: stderrLogger }).register({
   'im.message.receive_v1': async data => {
     const { message, sender } = data as {
       message: { chat_id: string; message_id: string; content: string }
@@ -284,8 +295,9 @@ const eventDispatcher = new lark.EventDispatcher({}).register({
 })
 
 function startFeishu(cfg: Config) {
-  client = new lark.Client({ appId: cfg.app_id, appSecret: cfg.app_secret })
-  wsClient = new lark.WSClient({ appId: cfg.app_id, appSecret: cfg.app_secret })
+  const opts = { appId: cfg.app_id, appSecret: cfg.app_secret, logger: stderrLogger }
+  client = new lark.Client(opts)
+  wsClient = new lark.WSClient(opts)
   wsClient.start({ eventDispatcher })
 }
 
