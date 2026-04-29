@@ -264,7 +264,10 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
   if (req.params.name === 'reply') {
     const { chat_id, text } = req.params.arguments as { chat_id: string; text: string }
     await finishProgress(chat_id, text)
-    return { content: [{ type: 'text', text: `replied on feishu:\n${text}` }] }
+    // Log to stderr so the terminal shows what was sent (host overrides
+    // the tool return for channel tools with its own indicator).
+    process.stderr.write(`[feishu:reply]\n${text}\n[/feishu:reply]\n`)
+    return { content: [{ type: 'text', text: 'sent' }] }
   }
   if (req.params.name === 'pair') {
     const { code } = req.params.arguments as { code: string }
