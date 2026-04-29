@@ -110,8 +110,8 @@ const mcp = new Server(
       'Reply with the reply tool, passing the chat_id from the tag. ' +
       'CRITICAL: You MUST ALWAYS call the reply tool after processing each Feishu message. ' +
       'The user sees both your terminal output AND the messages you send via reply. ' +
-      'Show your full reasoning and results in the terminal so the user can review the conversation history. ' +
-      'Then also send a concise summary or answer via the reply tool.' +
+      'Your reply via Feishu should contain the SAME detailed content as your terminal output. ' +
+      'Respond with the same level of detail in both places.' +
       'If the user has not yet configured Feishu credentials, ask them for FEISHU_APP_ID ' +
       '(starts with "cli_") and FEISHU_APP_SECRET, then call the configure tool. ' +
       'If the user says they have a pairing code (e.g., "pair ABC123"), call the pair tool.',
