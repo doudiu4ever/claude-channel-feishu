@@ -108,6 +108,9 @@ const mcp = new Server(
     instructions:
       'Messages from Feishu arrive as <channel source="feishu" chat_id="..." open_id="...">. ' +
       'Reply with the reply tool, passing the chat_id from the tag. ' +
+      'CRITICAL: You MUST ALWAYS call the reply tool after processing each Feishu message. ' +
+      'The user does NOT see your terminal output — they can only see messages you explicitly send via reply. ' +
+      'Even if you have nothing special to say, acknowledge the message with reply.' +
       'If the user has not yet configured Feishu credentials, ask them for FEISHU_APP_ID ' +
       '(starts with "cli_") and FEISHU_APP_SECRET, then call the configure tool. ' +
       'If the user says they have a pairing code (e.g., "pair ABC123"), call the pair tool.',
@@ -124,6 +127,93 @@ async function sendText(chat_id: string, text: string) {
       content: JSON.stringify({ text }),
     },
   })
+}
+
+// Per-chat progress state. While Claude is thinking, we tag the user's
+// inbound message with an eyes reaction and — if Claude takes too long —
+// post a "still working" placeholder that the reply tool later rewrites
+// into the final answer (so the chat shows one message, not two).
+type Pending = {
+  inboundMessageId: string
+  reactionId?: string
+  transitionMessageId?: string
+  timer?: ReturnType<typeof setTimeout>
+}
+const pendingByChat = new Map<string, Pending>()
+const KEEPALIVE_MS = 20_000
+const EYES_EMOJI = 'EYES'
+
+function clearPending(chat_id: string): Pending | undefined {
+  const p = pendingByChat.get(chat_id)
+  if (!p) return undefined
+  if (p.timer) clearTimeout(p.timer)
+  pendingByChat.delete(chat_id)
+  return p
+}
+
+async function startProgress(chat_id: string, message_id: string) {
+  const prev = clearPending(chat_id)
+  const pending: Pending = { inboundMessageId: message_id }
+  pendingByChat.set(chat_id, pending)
+
+  if (prev?.transitionMessageId && client) {
+    client.im.message.delete({ path: { message_id: prev.transitionMessageId } }).catch(() => {})
+  }
+
+  if (client) {
+    client.im.messageReaction
+      .create({
+        path: { message_id },
+        data: { reaction_type: { emoji_type: EYES_EMOJI } },
+      })
+      .then(r => {
+        const rid = r.data?.reaction_id
+        if (rid && pendingByChat.get(chat_id) === pending) pending.reactionId = rid
+      })
+      .catch(() => {})
+  }
+
+  pending.timer = setTimeout(() => {
+    if (!client || pendingByChat.get(chat_id) !== pending) return
+    client.im.message
+      .create({
+        params: { receive_id_type: 'chat_id' },
+        data: {
+          receive_id: chat_id,
+          msg_type: 'text',
+          content: JSON.stringify({ text: '⏳ still working on it...' }),
+        },
+      })
+      .then(r => {
+        const mid = r.data?.message_id
+        if (mid && pendingByChat.get(chat_id) === pending) pending.transitionMessageId = mid
+      })
+      .catch(() => {})
+  }, KEEPALIVE_MS)
+}
+
+async function finishProgress(chat_id: string, text: string) {
+  if (!client) throw new Error('feishu is not configured')
+  const pending = clearPending(chat_id)
+
+  if (pending?.reactionId && pending.inboundMessageId) {
+    client.im.messageReaction
+      .delete({
+        path: { message_id: pending.inboundMessageId, reaction_id: pending.reactionId },
+      })
+      .catch(() => {})
+  }
+
+  // Clean up the keepalive transition message if it exists.
+  // Note: im.message.patch only supports interactive cards, not text messages,
+  // so we always send a fresh reply rather than patching the transition message.
+  if (pending?.transitionMessageId) {
+    client.im.message
+      .delete({ path: { message_id: pending.transitionMessageId } })
+      .catch(() => {})
+  }
+
+  await sendText(chat_id, text)
 }
 
 mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -173,7 +263,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
 mcp.setRequestHandler(CallToolRequestSchema, async req => {
   if (req.params.name === 'reply') {
     const { chat_id, text } = req.params.arguments as { chat_id: string; text: string }
-    await sendText(chat_id, text)
+    await finishProgress(chat_id, text)
     return { content: [{ type: 'text', text: 'sent' }] }
   }
   if (req.params.name === 'pair') {
@@ -223,42 +313,64 @@ const PermissionRequestSchema = z.object({
   }),
 })
 
-function buildPermissionCard(params: {
+const decidedRequests = new Set<string>()
+
+// --- Batched permission cards ---
+// Instead of one card per tool call (which floods Feishu when Claude runs
+// multiple tools in parallel), collect requests with a short debounce and
+// send ONE card listing all pending approvals.
+
+const PERM_BATCH_MS = 600
+let permBatch: PermissionRequestParams[] = []
+let permBatchTimer: ReturnType<typeof setTimeout> | null = null
+let permBatchSeq = 0
+const permBatchRidMap = new Map<string, string[]>()
+
+type PermissionRequestParams = {
   request_id: string
   tool_name: string
   description: string
   input_preview: string
-}) {
-  const { request_id, tool_name, description, input_preview } = params
-  const body = [
-    `**Tool**: ${tool_name}`,
-    description ? description : '',
-    input_preview ? '```\n' + input_preview.slice(0, 400) + '\n```' : '',
-  ]
-    .filter(Boolean)
+}
+
+function buildBatchCard(batchId: string, params: PermissionRequestParams[]) {
+  const items = params
+    .map(
+      (r, i) =>
+        `**${i + 1}. ${r.tool_name}**` +
+        (r.description ? `\n${r.description}` : '') +
+        (r.input_preview ? '\n```\n' + r.input_preview.slice(0, 300) + '\n```' : ''),
+    )
     .join('\n\n')
+
   return {
     config: { wide_screen_mode: true },
     header: {
       template: 'orange',
-      title: { tag: 'plain_text', content: 'Claude permission request' },
+      title: {
+        tag: 'plain_text',
+        content:
+          params.length === 1
+            ? 'Claude permission request'
+            : `Claude permission request (${params.length} pending)`,
+      },
     },
     elements: [
-      { tag: 'div', text: { tag: 'lark_md', content: body } },
+      { tag: 'div', text: { tag: 'lark_md', content: items } },
       {
         tag: 'action',
         actions: [
           {
             tag: 'button',
-            text: { tag: 'plain_text', content: 'Allow' },
+            text: { tag: 'plain_text', content: 'Allow All' },
             type: 'primary',
-            value: { rid: request_id, d: 'allow' },
+            value: { bid: batchId, d: 'allow' },
           },
           {
             tag: 'button',
-            text: { tag: 'plain_text', content: 'Deny' },
+            text: { tag: 'plain_text', content: 'Deny All' },
             type: 'danger',
-            value: { rid: request_id, d: 'deny' },
+            value: { bid: batchId, d: 'deny' },
           },
         ],
       },
@@ -266,22 +378,45 @@ function buildPermissionCard(params: {
   }
 }
 
-const decidedRequests = new Set<string>()
+function flushPermBatch() {
+  if (!client || permBatch.length === 0) return
+  const batch = permBatch
+  permBatch = []
+  permBatchTimer = null
+
+  const batchId = `b${++permBatchSeq}`
+  const rids = batch.map(r => r.request_id)
+  const card = buildBatchCard(batchId, batch)
+  const access = loadAccess()
+  for (const open_id of access.allowFrom) {
+    client.im.message
+      .create({
+        params: { receive_id_type: 'open_id' },
+        data: {
+          receive_id: open_id,
+          msg_type: 'interactive',
+          content: JSON.stringify(card),
+        },
+      })
+      .catch(() => {})
+  }
+
+  permBatchRidMap.set(batchId, rids)
+  setTimeout(() => permBatchRidMap.delete(batchId), 5 * 60 * 1000)
+}
 
 mcp.setNotificationHandler(PermissionRequestSchema, async ({ params }) => {
   if (!client) return
-  const access = loadAccess()
-  const card = buildPermissionCard(params)
-  for (const open_id of access.allowFrom) {
-    await client.im.message.create({
-      params: { receive_id_type: 'open_id' },
-      data: {
-        receive_id: open_id,
-        msg_type: 'interactive',
-        content: JSON.stringify(card),
-      },
-    })
-  }
+
+  permBatch.push({
+    request_id: params.request_id,
+    tool_name: params.tool_name,
+    description: params.description,
+    input_preview: params.input_preview,
+  })
+
+  if (permBatchTimer) clearTimeout(permBatchTimer)
+  permBatchTimer = setTimeout(flushPermBatch, PERM_BATCH_MS)
 })
 
 const PERM_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
@@ -323,6 +458,8 @@ const eventDispatcher = new lark.EventDispatcher({ logger: stderrLogger }).regis
       return
     }
 
+    void startProgress(message.chat_id, message.message_id)
+
     await mcp.notification({
       method: 'notifications/claude/channel',
       params: {
@@ -337,20 +474,52 @@ const eventDispatcher = new lark.EventDispatcher({ logger: stderrLogger }).regis
   },
   'card.action.trigger': async data => {
     const d = data as {
-      action?: { value?: { rid?: string; d?: 'allow' | 'deny' } }
+      action?: { value?: Record<string, string> }
       operator?: { open_id?: string }
     }
-    const rid = d.action?.value?.rid
-    const decision = d.action?.value?.d
+    const value = d.action?.value ?? {}
+    const decision = value['d'] as 'allow' | 'deny' | undefined
     const open_id = d.operator?.open_id ?? ''
-    if (!rid || !decision) return
+    if (!decision || !open_id) return
     const access = loadAccess()
     if (!access.allowFrom.includes(open_id)) return
 
-    if (decidedRequests.has(rid)) {
-      return {
-        toast: { type: 'info', content: 'Already handled.' },
+    const bid = value['bid']
+    const rid = value['rid']
+
+    // Batch card: resolve rids from batch map
+    if (bid) {
+      const rids = permBatchRidMap.get(bid)
+      if (!rids || rids.length === 0) {
+        process.stderr.write(`[feishu] batch ${bid} already handled\n`)
+        return { toast: { type: 'info', content: 'Already handled.' } }
       }
+      permBatchRidMap.delete(bid)
+
+      for (const r of rids) {
+        if (decidedRequests.has(r)) continue
+        decidedRequests.add(r)
+        await mcp.notification({
+          method: 'notifications/claude/channel/permission',
+          params: { request_id: r, behavior: decision },
+        })
+      }
+
+      return {
+        toast: {
+          type: decision === 'allow' ? 'success' : 'warning',
+          content:
+            decision === 'allow'
+              ? `Allowed ${rids.length} request${rids.length > 1 ? 's' : ''}.`
+              : `Denied ${rids.length} request${rids.length > 1 ? 's' : ''}.`,
+        },
+      }
+    }
+
+    // Legacy single-request card
+    if (!rid) return
+    if (decidedRequests.has(rid)) {
+      return { toast: { type: 'info', content: 'Already handled.' } }
     }
     decidedRequests.add(rid)
 
