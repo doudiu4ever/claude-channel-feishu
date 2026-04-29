@@ -109,8 +109,9 @@ const mcp = new Server(
       'Messages from Feishu arrive as <channel source="feishu" chat_id="..." open_id="...">. ' +
       'Reply with the reply tool, passing the chat_id from the tag. ' +
       'CRITICAL: You MUST ALWAYS call the reply tool after processing each Feishu message. ' +
-      'The user does NOT see your terminal output — they can only see messages you explicitly send via reply. ' +
-      'Even if you have nothing special to say, acknowledge the message with reply.' +
+      'The user sees both your terminal output AND the messages you send via reply. ' +
+      'Show your full reasoning and results in the terminal so the user can review the conversation history. ' +
+      'Then also send a concise summary or answer via the reply tool.' +
       'If the user has not yet configured Feishu credentials, ask them for FEISHU_APP_ID ' +
       '(starts with "cli_") and FEISHU_APP_SECRET, then call the configure tool. ' +
       'If the user says they have a pairing code (e.g., "pair ABC123"), call the pair tool.',
@@ -264,9 +265,6 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
   if (req.params.name === 'reply') {
     const { chat_id, text } = req.params.arguments as { chat_id: string; text: string }
     await finishProgress(chat_id, text)
-    // Log to stderr so the terminal shows what was sent (host overrides
-    // the tool return for channel tools with its own indicator).
-    process.stderr.write(`[feishu:reply]\n${text}\n[/feishu:reply]\n`)
     return { content: [{ type: 'text', text: 'sent' }] }
   }
   if (req.params.name === 'pair') {
@@ -494,7 +492,6 @@ const eventDispatcher = new lark.EventDispatcher({ logger: stderrLogger }).regis
     if (bid) {
       const rids = permBatchRidMap.get(bid)
       if (!rids || rids.length === 0) {
-        process.stderr.write(`[feishu] batch ${bid} already handled\n`)
         return { toast: { type: 'info', content: 'Already handled.' } }
       }
       permBatchRidMap.delete(bid)
