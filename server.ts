@@ -107,9 +107,8 @@ const mcp = new Server(
     },
     instructions:
       'Messages from Feishu arrive as <channel source="feishu" chat_id="..." open_id="...">. ' +
-      'You MUST call the reply tool for EVERY incoming Feishu message — ' +
-      'NEVER respond only in the terminal without calling reply. ' +
-      'The user can see both the terminal and Feishu; show the same content in both places. ' +
+      'Reply with the reply tool, passing the chat_id from the tag. ' +
+      'Always call reply for every message — your terminal output is not sent to Feishu. ' +
       'If the user has not yet configured Feishu credentials, ask them for FEISHU_APP_ID ' +
       '(starts with "cli_") and FEISHU_APP_SECRET, then call the configure tool. ' +
       'If the user says they have a pairing code (e.g., "pair ABC123"), call the pair tool.',
