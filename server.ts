@@ -306,6 +306,27 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'notify',
+      description:
+        'Push a progress update to Feishu during long-running work. ' +
+        'Unlike reply, this does NOT consume the inbound message — the reaction and keepalive stay active. ' +
+        'Call this between major steps (at most every few turns, not every turn) so the user can monitor remotely. ' +
+        'Renders as a small grey/blue/yellow card, visually distinct from reply text.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          chat_id: { type: 'string', description: 'The conversation to notify (required — typically the inbound chat_id)' },
+          text: { type: 'string', description: 'One-line progress message' },
+          kind: {
+            type: 'string',
+            enum: ['status', 'milestone', 'warning'],
+            description: 'Card style: status (grey), milestone (blue), warning (yellow). Defaults to status.',
+          },
+        },
+        required: ['chat_id', 'text'],
+      },
+    },
+    {
       name: 'download_attachment',
       description: 'Download an image or file attachment from a Feishu message to the local inbox.',
       inputSchema: {
@@ -404,6 +425,22 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
 
     const summary = results.length > 0 ? `sent: ${args.text}\n${results.join('\n')}` : `sent: ${args.text}`
     return { content: [{ type: 'text', text: summary }] }
+  }
+  if (req.params.name === 'notify') {
+    const { chat_id, text, kind } = req.params.arguments as {
+      chat_id: string; text: string; kind?: string
+    }
+    if (!client) throw new Error('feishu is not configured')
+    const card = buildNotifyCard(kind ?? 'status', text)
+    await client.im.message.create({
+      params: { receive_id_type: 'chat_id' },
+      data: {
+        receive_id: chat_id,
+        msg_type: 'interactive',
+        content: JSON.stringify(card),
+      },
+    })
+    return { content: [{ type: 'text', text: `notified ${chat_id}: ${text}` }] }
   }
   if (req.params.name === 'download_attachment') {
     const { message_id, file_key, type } = req.params.arguments as {
@@ -560,6 +597,19 @@ function buildPairCard(code: string, open_id: string) {
         ],
       },
     ],
+  }
+}
+
+function buildNotifyCard(kind: string, text: string) {
+  const templates: Record<string, string> = { status: 'grey', milestone: 'blue', warning: 'yellow' }
+  const labels: Record<string, string> = { status: 'Status', milestone: 'Milestone', warning: 'Warning' }
+  return {
+    config: { wide_screen_mode: false },
+    header: {
+      template: templates[kind] ?? 'grey',
+      title: { tag: 'plain_text', content: labels[kind] ?? 'Status' },
+    },
+    elements: [{ tag: 'div', text: { tag: 'lark_md', content: text } }],
   }
 }
 
