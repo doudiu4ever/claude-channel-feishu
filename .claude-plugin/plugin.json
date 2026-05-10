@@ -1,7 +1,7 @@
 {
   "name": "feishu",
   "description": "Feishu/Lark channel for Claude Code — bridges a Feishu bot to the Claude Code session. Configure credentials at runtime, pair senders via 6-char codes, relay permission prompts for remote approval.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "keywords": [
     "feishu",
     "lark",
