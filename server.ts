@@ -6,16 +6,18 @@ import {
 } from '@modelcontextprotocol/sdk/types.js'
 import * as lark from '@larksuiteoapi/node-sdk'
 import { z } from 'zod'
-import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, statSync, realpathSync } from 'fs'
 import { homedir } from 'os'
-import { join, dirname } from 'path'
+import { join, dirname, extname, sep } from 'path'
 
 const ACCESS_FILE =
   process.env.FEISHU_ACCESS_FILE ??
   join(homedir(), '.claude', 'channels', 'feishu', 'access.json')
+const STATE_DIR = join(homedir(), '.claude', 'channels', 'feishu')
 const CONFIG_FILE =
   process.env.FEISHU_CONFIG_FILE ??
-  join(homedir(), '.claude', 'channels', 'feishu', 'config.json')
+  join(STATE_DIR, 'config.json')
+const INBOX_DIR = join(STATE_DIR, 'inbox')
 
 type Config = { app_id: string; app_secret: string }
 
@@ -96,6 +98,67 @@ function consumePairCode(code: string): PendingPair | null {
   return entry
 }
 
+function safeName(s: string | undefined): string {
+  return (s ?? 'file').replace(/[<>\[\]\r\n;]/g, '_').slice(0, 200)
+}
+
+async function downloadResource(
+  message_id: string,
+  file_key: string,
+  type: string,
+): Promise<string | null> {
+  if (!client) return null
+  try {
+    const res = await client.im.messageResource.get({
+      params: { type },
+      path: { message_id, file_key },
+    })
+    const typeExt: Record<string, string> = { image: 'jpg', file: 'bin', audio: 'amr', media: 'mp4' }
+    let ext = typeExt[type] ?? 'bin'
+    const disposition = (res.headers as Record<string, string>)?.['content-disposition'] ?? ''
+    const fnMatch = disposition.match(/filename\*?=["']?([^"';\s]+)/i)
+    if (fnMatch) {
+      const fromHeader = (fnMatch[1].split('.').pop() ?? '').replace(/[^a-zA-Z0-9]/g, '')
+      if (fromHeader) ext = fromHeader
+    }
+    const path = join(INBOX_DIR, `${Date.now()}-${file_key.slice(0, 12)}.${ext}`)
+    mkdirSync(INBOX_DIR, { recursive: true })
+    await res.writeFile(path)
+    return path
+  } catch {
+    return null
+  }
+}
+
+function assertSendable(f: string): void {
+  let real: string
+  try { real = realpathSync(f) } catch { return }
+
+  // Block everything under the state directory except inbox
+  try {
+    const stateReal = realpathSync(STATE_DIR)
+    const inbox = join(stateReal, 'inbox')
+    if (real.startsWith(stateReal + sep) && !real.startsWith(inbox + sep)) {
+      throw new Error(`refusing to send channel state: ${f}`)
+    }
+  } catch (e) {
+    if (e instanceof Error && e.message.includes('refusing')) throw e
+    // STATE_DIR doesn't exist — fall through to the explicit file checks below
+  }
+
+  // Block the exact access/config files (including custom paths)
+  for (const sensitive of [ACCESS_FILE, CONFIG_FILE]) {
+    try {
+      const sReal = realpathSync(sensitive)
+      if (real === sReal) {
+        throw new Error(`refusing to send channel state: ${f}`)
+      }
+    } catch (e) {
+      if (e instanceof Error && e.message.includes('refusing')) throw e
+    }
+  }
+}
+
 const mcp = new Server(
   { name: 'feishu', version: '0.1.0' },
   {
@@ -112,6 +175,9 @@ const mcp = new Server(
       'Channel message (<channel> tag) → reply(chat_id, answer), echo "→ feishu: answer". ' +
       'Terminal message → reply("终端: question"), then reply(answer). ' +
       'Skipping reply = Feishu user sees nothing. No exceptions. ' +
+      'Attachments: inbound image/file events include image_path/file_path in meta — Read them directly. ' +
+      'Use download_attachment(message_id, file_key, type) to fetch resources on demand. ' +
+      'To send files, pass absolute paths in the reply files parameter. ' +
       'If the user has not yet configured Feishu credentials, ask them for FEISHU_APP_ID ' +
       '(starts with "cli_") and FEISHU_APP_SECRET, then call the configure tool. ' +
       'If the user says they have a pairing code (e.g., "pair ABC123"), call the pair tool.',
@@ -221,14 +287,32 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: 'reply',
-      description: 'Reply on Feishu. Pass the chat_id from the inbound <channel> tag, or omit to use the last active conversation.',
+      description: 'Reply on Feishu. Pass the chat_id from the inbound <channel> tag, or omit to use the last active conversation. Attach files by passing absolute file paths.',
       inputSchema: {
         type: 'object',
         properties: {
           chat_id: { type: 'string', description: 'The conversation to reply in (optional — defaults to last active)' },
           text: { type: 'string', description: 'The message to send' },
+          files: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Absolute file paths to attach. Images (.jpg/.png/.gif/.webp/.bmp) send as inline images; other types as documents. Max 20MB each.',
+          },
         },
         required: ['text'],
+      },
+    },
+    {
+      name: 'download_attachment',
+      description: 'Download an image or file attachment from a Feishu message to the local inbox.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          message_id: { type: 'string', description: 'The message_id from the inbound channel meta' },
+          file_key: { type: 'string', description: 'The image_key or file_key from the inbound channel meta' },
+          type: { type: 'string', description: 'Resource type: "image", "file", "audio", or "media"' },
+        },
+        required: ['message_id', 'file_key', 'type'],
       },
     },
     {
@@ -263,7 +347,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 mcp.setRequestHandler(CallToolRequestSchema, async req => {
   if (req.params.name === 'reply') {
-    const args = req.params.arguments as { chat_id?: string; text: string }
+    const args = req.params.arguments as { chat_id?: string; text: string; files?: string[] }
     const chat_id = args.chat_id ?? lastChatId
     if (!chat_id) {
       return {
@@ -271,8 +355,62 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         isError: true,
       }
     }
+    if (!client) throw new Error('feishu is not configured')
+
+    const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.ico'])
+    const MAX_IMAGE_BYTES = 10 * 1024 * 1024
+    const MAX_FILE_BYTES = 20 * 1024 * 1024
+
     await finishProgress(chat_id, args.text)
-    return { content: [{ type: 'text', text: `sent: ${args.text}` }] }
+
+    const results: string[] = []
+    if (args.files && args.files.length > 0) {
+      for (const f of args.files) {
+        assertSendable(f)
+        const stat = statSync(f)
+        const ext = extname(f).toLowerCase()
+        const isImage = IMAGE_EXTS.has(ext)
+        const limit = isImage ? MAX_IMAGE_BYTES : MAX_FILE_BYTES
+        if (stat.size > limit) {
+          results.push(`skipped ${f}: too large (${Math.round(stat.size / 1024 / 1024)}MB > ${Math.round(limit / 1024 / 1024)}MB)`)
+          continue
+        }
+        if (isImage) {
+          const upload = await client.im.image.create({
+            data: { image_type: 'message', image: readFileSync(f) },
+          })
+          if (!upload?.image_key) { results.push(`failed to upload image: ${f}`); continue }
+          await client.im.message.create({
+            params: { receive_id_type: 'chat_id' },
+            data: { receive_id: chat_id, msg_type: 'image', content: JSON.stringify({ image_key: upload.image_key }) },
+          })
+          results.push(`sent image: ${f}`)
+        } else {
+          const upload = await client.im.file.create({
+            data: { file_type: 'stream', file_name: f.split('/').pop() ?? 'file', file: readFileSync(f) },
+          })
+          if (!upload?.file_key) { results.push(`failed to upload file: ${f}`); continue }
+          await client.im.message.create({
+            params: { receive_id_type: 'chat_id' },
+            data: { receive_id: chat_id, msg_type: 'file', content: JSON.stringify({ file_key: upload.file_key }) },
+          })
+          results.push(`sent file: ${f}`)
+        }
+      }
+    }
+
+    const summary = results.length > 0 ? `sent: ${args.text}\n${results.join('\n')}` : `sent: ${args.text}`
+    return { content: [{ type: 'text', text: summary }] }
+  }
+  if (req.params.name === 'download_attachment') {
+    const { message_id, file_key, type } = req.params.arguments as {
+      message_id: string; file_key: string; type: string
+    }
+    const path = await downloadResource(message_id, file_key, type)
+    if (!path) {
+      return { content: [{ type: 'text', text: `download failed for ${file_key}` }], isError: true }
+    }
+    return { content: [{ type: 'text', text: path }] }
   }
   if (req.params.name === 'pair') {
     const { code } = req.params.arguments as { code: string }
@@ -432,7 +570,7 @@ const PERM_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
 const eventDispatcher = new lark.EventDispatcher({ logger: stderrLogger }).register({
   'im.message.receive_v1': async data => {
     const { message, sender } = data as {
-      message: { chat_id: string; message_id: string; content: string }
+      message: { chat_id: string; message_id: string; content: string; message_type: string }
       sender: { sender_id?: { open_id?: string } }
     }
     const access = loadAccess()
@@ -451,8 +589,34 @@ const eventDispatcher = new lark.EventDispatcher({ logger: stderrLogger }).regis
       return
     }
 
-    const parsed = JSON.parse(message.content) as { text?: string }
-    const text = parsed.text ?? ''
+    const parsed = JSON.parse(message.content) as { text?: string; image_key?: string; file_key?: string; file_name?: string }
+    const msgType = message.message_type
+    let text = parsed.text ?? ''
+    const extraMeta: Record<string, string> = {}
+
+    // Handle non-text message types
+    if (msgType === 'image' && parsed.image_key) {
+      const path = await downloadResource(message.message_id, parsed.image_key, 'image')
+      extraMeta['image_key'] = parsed.image_key
+      if (path) extraMeta['image_path'] = path
+      text = text || '(image)'
+    } else if (msgType === 'file' && parsed.file_key) {
+      const path = await downloadResource(message.message_id, parsed.file_key, 'file')
+      extraMeta['file_key'] = parsed.file_key
+      if (path) extraMeta['file_path'] = path
+      text = text || `(file)`
+    } else if (msgType === 'audio' && parsed.file_key) {
+      extraMeta['audio_key'] = parsed.file_key
+      text = text || '(audio)'
+    } else if (msgType === 'media' && parsed.file_key) {
+      extraMeta['media_key'] = parsed.file_key
+      if (parsed.image_key) extraMeta['media_image_key'] = parsed.image_key
+      if (parsed.file_name) extraMeta['media_name'] = safeName(parsed.file_name)
+      text = text || `(media: ${parsed.file_name ?? 'video'})`
+    } else if (msgType === 'sticker' && parsed.image_key) {
+      extraMeta['sticker_key'] = parsed.image_key
+      text = text || '(sticker)'
+    }
 
     const m = PERM_RE.exec(text)
     if (m) {
@@ -478,6 +642,7 @@ const eventDispatcher = new lark.EventDispatcher({ logger: stderrLogger }).regis
           chat_id: message.chat_id,
           message_id: message.message_id,
           open_id,
+          ...extraMeta,
         },
       },
     })
