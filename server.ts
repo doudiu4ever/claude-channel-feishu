@@ -524,6 +524,64 @@ function buildBatchCard(batchId: string, params: PermissionRequestParams[]) {
   }
 }
 
+function buildPairCard(code: string, open_id: string) {
+  return {
+    config: { wide_screen_mode: true },
+    header: {
+      template: 'orange',
+      title: { tag: 'plain_text', content: 'New user wants to connect' },
+    },
+    elements: [
+      {
+        tag: 'div',
+        text: {
+          tag: 'lark_md',
+          content: `User \`${open_id}\` wants to talk to the assistant.\nPairing code: **${code}**`,
+        },
+      },
+      {
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: 'Allow' },
+            type: 'primary',
+            value: { code, d: 'allow' },
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: 'Deny' },
+            type: 'danger',
+            value: { code, d: 'deny' },
+          },
+        ],
+      },
+    ],
+  }
+}
+
+async function sendPairCardToAdmins(code: string, new_open_id: string) {
+  if (!client) return
+  const access = loadAccess()
+  if (access.allowFrom.length === 0) {
+    stderrLogger.info('sendPairCardToAdmins: no admins in access.json, skipping card')
+    return
+  }
+  const card = buildPairCard(code, new_open_id)
+  for (const open_id of access.allowFrom) {
+    client.im.message
+      .create({
+        params: { receive_id_type: 'open_id' },
+        data: {
+          receive_id: open_id,
+          msg_type: 'interactive',
+          content: JSON.stringify(card),
+        },
+      })
+      .catch(e => stderrLogger.error('sendPairCardToAdmins failed for', open_id, String(e)))
+  }
+}
+
 function flushPermBatch() {
   if (!client || permBatch.length === 0) return
   const batch = permBatch
@@ -586,6 +644,7 @@ const eventDispatcher = new lark.EventDispatcher({ logger: stderrLogger }).regis
           `In the Claude Code terminal, say: pair ${code}\n` +
           `(valid for 10 minutes)`,
       )
+      sendPairCardToAdmins(code, open_id)
       return
     }
 
@@ -668,8 +727,57 @@ const eventDispatcher = new lark.EventDispatcher({ logger: stderrLogger }).regis
     const access = loadAccess()
     if (!access.allowFrom.includes(open_id)) return
 
+    const pairingCode = value['code']
     const bid = value['bid']
     const rid = value['rid']
+
+    // Pairing card: approve/deny a new user
+    if (pairingCode) {
+      if (decision === 'allow') {
+        const pending = pendingByCode.get(pairingCode)
+        if (!pending || pending.expiresAt < Date.now()) {
+          return { toast: { type: 'warning', content: 'Pairing code expired or already handled.' } }
+        }
+        try {
+          const updated = loadAccess()
+          if (!updated.allowFrom.includes(pending.open_id)) {
+            updated.allowFrom.push(pending.open_id)
+            saveAccess(updated)
+          }
+        } catch (e) {
+          stderrLogger.error('pairing card saveAccess failed', String(e))
+          return { toast: { type: 'error', content: 'Approval failed. Please try the terminal pair command.' } }
+        }
+        consumePairCode(pairingCode)
+        const sendOk = await sendText(pending.chat_id, 'Paired. You can now talk to the assistant.')
+          .then(() => true)
+          .catch(e => {
+            stderrLogger.error('pairing card sendText failed', String(e))
+            return false
+          })
+        return {
+          toast: {
+            type: sendOk ? 'success' : 'warning',
+            content: sendOk ? 'User approved.' : 'User approved but notification failed — they may not know they are paired.',
+          },
+        }
+      }
+      // Deny
+      if (decision === 'deny') {
+        const entry = consumePairCode(pairingCode)
+        if (entry) {
+          sendText(entry.chat_id, 'Your pairing request was denied.').catch(e =>
+            stderrLogger.error('pairing card deny sendText failed', String(e)),
+          )
+        }
+        return {
+          toast: {
+            type: 'warning',
+            content: entry ? 'User denied.' : 'Pairing code expired or already handled.',
+          },
+        }
+      }
+    }
 
     // Batch card: resolve rids from batch map
     if (bid) {
