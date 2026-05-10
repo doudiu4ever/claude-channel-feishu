@@ -751,6 +751,27 @@ const eventDispatcher = new lark.EventDispatcher({ logger: stderrLogger }).regis
       return
     }
 
+    // If Claude is still processing a previous message from this chat,
+    // let the user know the new message landed but will be handled later.
+    // Placed after the permission-command short-circuit so yes/no replies
+    // don't trigger a misleading busy card.
+    if (pendingByChat.has(message.chat_id) && client) {
+      const busyCard = buildNotifyCard(
+        'warning',
+        'Message received. Claude is currently busy and will see this when the current operation finishes.',
+      )
+      client.im.message
+        .create({
+          params: { receive_id_type: 'chat_id' },
+          data: {
+            receive_id: message.chat_id,
+            msg_type: 'interactive',
+            content: JSON.stringify(busyCard),
+          },
+        })
+        .catch(() => {})
+    }
+
     void startProgress(message.chat_id, message.message_id)
 
     lastChatId = message.chat_id

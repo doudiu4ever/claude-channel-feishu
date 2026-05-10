@@ -18,6 +18,7 @@ inject new instructions from Feishu while away from the terminal.
 - `configure` tool (credentials → `config.json`)
 - `download_attachment` tool
 - Image / file / audio / media attachment support (inbound + outbound)
+- `notify` tool: proactive progress reporting during long-running tasks
 - Progress indicator: OK reaction + keepalive message after 20s
 - Packaged as a Claude Code marketplace plugin (`dist/server.mjs` bundle)
 
@@ -29,72 +30,15 @@ Pick one off the top of a tier when starting work.
 
 ## Tier P0 — closes the gap to the stated use case
 
-### 1. Proactive progress reporting tool (`notify` / `progress`)
+### 1. Proactive progress reporting tool (`notify` / `progress`) ✅
 
-**Why this is P0**: today's flow is strictly request-response. The user DMs
-Feishu → Claude does a turn → `reply`. During a 30-minute task, Feishu sees
-nothing. The 20s "still working on it..." keepalive (`startProgress` /
-`finishProgress` in `server.ts:151`) is only per-inbound-message; it doesn't
-help once Claude is several turns deep into autonomous work.
-
-**Shape**: add a tool the model can call between meaningful steps:
-
-```
-notify(chat_id, text, kind?: 'status' | 'milestone' | 'warning')
-```
-
-- Sends to Feishu without consuming a `reply` (i.e. doesn't close the eyes
-  reaction or finalize the keepalive placeholder).
-- Tool description must steer the model: "Call this between major steps of
-  long-running work to push a one-line status to Feishu so the user can
-  monitor remotely. Don't spam — at most every few turns."
-- Render as a small italic/grey card so it's visually distinct from `reply`.
-
-**Implementation pointers**:
-- New tool definition in `ListToolsRequestSchema` handler (`server.ts:221`).
-- New branch in `CallToolRequestSchema` handler (`server.ts:265`).
-- For rendering: lark interactive card with header `template: 'grey'` and a
-  small `note` element, OR lark_md text with a leading icon.
-- Don't touch `pendingByChat` state — `notify` is orthogonal to the
-  inbound-message progress lifecycle.
-
-**Open question**: should `notify` go to all `access.json` open_ids (broadcast
-to all paired admins) or only the chat that originated the current task?
-Probably the latter, defaulting to the most-recently-active chat if no
-chat_id is supplied — but model should always pass chat_id explicitly when
-it can.
+Implemented. Exposed as `notify(chat_id, text, kind?)` MCP tool. Renders as
+a small interactive card (grey/blue/yellow header, no buttons), visually
+distinct from `reply`. Does not touch `pendingByChat` or `lastChatId`.
 
 ---
 
-### 2. Status query handling — `/status` slash-style command
-
-**Why**: when user is away from desk, the most common Feishu message will be
-"how's it going?" — but Claude has no special handling for this. It will see
-the message as a regular channel event and respond with whatever it can
-infer. We can do better: make `/status` a first-class signal.
-
-**Shape**: in the `im.message.receive_v1` handler (`server.ts:382`), recognize
-a small set of slash commands *before* forwarding to Claude, and inject a
-richer notification that carries the command intent:
-
-- `/status` → notification with `meta.command: 'status'`, model is steered
-  (via channel instructions) to respond concisely with: current task,
-  last action, what's pending. No tools, just a summary.
-- `/abort` → relay as a high-priority notification + a session-level
-  signal Claude can act on (cancel current Bash, stop multi-step plan).
-- `/resume` → after a pause, prompt Claude to continue the previous TODO.
-- `/log <n>` → ask for last N turns' summary.
-
-**Implementation pointers**:
-- Pre-parse in the WS handler before `mcp.notification`.
-- Update the channel `instructions` string (`server.ts:108`) so the model
-  knows what to do with each command.
-- Keep parser conservative — only match exact `/word` at message start to
-  avoid eating natural language.
-
----
-
-### 3. Mid-execution inbound: queue vs interrupt semantics
+### 2. Mid-execution inbound: queue vs interrupt semantics
 
 **Why**: if user DMs while Claude is mid-Bash, what happens? The channel
 notification fires, but Claude's tool loop won't see it until the current
@@ -179,7 +123,13 @@ approaches:
   share the same Feishu app but each takes a slice of `access.json`-routed
   chats. Needs careful design — defer until felt as pain.
 
-### 9. `react`, `edit_message` tools
+### 9. Slash commands (`/status`, `/abort`, `/resume`, `/log`)
+
+Downgraded from P0. Natural-language "how's it going?" already covers most
+of the value. Implement when the gap between structured commands and free
+text becomes noticeable in real usage.
+
+### 10. `react`, `edit_message` tools
 
 `download_attachment` is already implemented. `react` (add emoji reaction
 to messages) and `edit_message` (patch previously-sent bot messages) remain.
@@ -209,11 +159,9 @@ Lower priority than the items above.
 
 ## Suggested ordering when work resumes
 
-1. P0.1 (`notify` tool) — biggest user-visible win, smallest implementation.
-2. P0.2 (`/status` etc.) — pairs naturally with P0.1.
-3. P1.5 (group chat @-mention) — unlocks team workflows.
-4. P0.3 (mid-execution semantics) — do once you have real usage data.
-5. P2.9 (`react` / `edit_message` tools) — round out Telegram parity.
-6. P1.6 (crash recovery) — once flow is otherwise smooth and you start
+1. P1.5 (group chat @-mention) — unlocks team workflows.
+2. P2.9 (`react` / `edit_message` tools) — round out Telegram parity.
+3. P0.2 (mid-execution semantics) — do once you have real usage data.
+4. P1.6 (crash recovery) — once flow is otherwise smooth and you start
    hitting reliability limits.
-7. Everything else: opportunistic.
+5. Everything else: opportunistic.
