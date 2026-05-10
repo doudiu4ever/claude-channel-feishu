@@ -42,6 +42,7 @@ function saveConfig(cfg: Config) {
 
 let client: lark.Client | null = null
 let wsClient: lark.WSClient | null = null
+let lastChatId: string | null = null
 
 // Feishu SDK defaults to stdout for info logs — but stdout is the MCP
 // JSON-RPC stream, so any non-protocol write corrupts it and Claude drops
@@ -106,9 +107,11 @@ const mcp = new Server(
       },
     },
     instructions:
-      'Messages from Feishu arrive as <channel source="feishu" chat_id="..." open_id="...">. ' +
-      'Reply with the reply tool, passing the chat_id from the tag. ' +
-      'Always call reply for every message — your terminal output is not sent to Feishu. ' +
+      'CRITICAL: you are a bridge to Feishu. The Feishu user CANNOT see your terminal output. ' +
+      'You MUST call the reply tool for EVERY response. ' +
+      'Channel message (<channel> tag) → reply(chat_id, answer), echo "→ feishu: answer". ' +
+      'Terminal message → reply("终端: question"), then reply(answer). ' +
+      'Skipping reply = Feishu user sees nothing. No exceptions. ' +
       'If the user has not yet configured Feishu credentials, ask them for FEISHU_APP_ID ' +
       '(starts with "cli_") and FEISHU_APP_SECRET, then call the configure tool. ' +
       'If the user says they have a pairing code (e.g., "pair ABC123"), call the pair tool.',
@@ -218,14 +221,14 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: 'reply',
-      description: 'Reply on Feishu. Pass the chat_id from the inbound <channel> tag.',
+      description: 'Reply on Feishu. Pass the chat_id from the inbound <channel> tag, or omit to use the last active conversation.',
       inputSchema: {
         type: 'object',
         properties: {
-          chat_id: { type: 'string', description: 'The conversation to reply in' },
+          chat_id: { type: 'string', description: 'The conversation to reply in (optional — defaults to last active)' },
           text: { type: 'string', description: 'The message to send' },
         },
-        required: ['chat_id', 'text'],
+        required: ['text'],
       },
     },
     {
@@ -260,9 +263,16 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 mcp.setRequestHandler(CallToolRequestSchema, async req => {
   if (req.params.name === 'reply') {
-    const { chat_id, text } = req.params.arguments as { chat_id: string; text: string }
-    await finishProgress(chat_id, text)
-    return { content: [{ type: 'text', text: 'sent' }] }
+    const args = req.params.arguments as { chat_id?: string; text: string }
+    const chat_id = args.chat_id ?? lastChatId
+    if (!chat_id) {
+      return {
+        content: [{ type: 'text', text: 'no active Feishu conversation yet — send a message from Feishu first' }],
+        isError: true,
+      }
+    }
+    await finishProgress(chat_id, args.text)
+    return { content: [{ type: 'text', text: `sent: ${args.text}` }] }
   }
   if (req.params.name === 'pair') {
     const { code } = req.params.arguments as { code: string }
@@ -457,6 +467,8 @@ const eventDispatcher = new lark.EventDispatcher({ logger: stderrLogger }).regis
     }
 
     void startProgress(message.chat_id, message.message_id)
+
+    lastChatId = message.chat_id
 
     await mcp.notification({
       method: 'notifications/claude/channel',

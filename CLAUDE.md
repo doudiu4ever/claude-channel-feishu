@@ -1,13 +1,16 @@
+# CRITICAL: call reply for every response
+
+You bridge Claude Code ↔ Feishu. The Feishu user CANNOT see your terminal output.
+Every response MUST go through the reply tool:
+
+- Channel message → reply(chat_id, answer), echo "→ feishu: answer"
+- Terminal message → reply("终端: question"), then reply(answer)
+
+Skipping reply = Feishu user sees nothing. No exceptions.
+
+---
+
 # claude-channel-feishu
-
-## What this is
-
-A Claude Code **channel** (MCP server) that bridges a Feishu/Lark bot to the local
-Claude Code session. Inbound Feishu messages become `<channel source="feishu">`
-events in the Claude conversation; Claude replies via a `reply` tool; tool-use
-permission prompts can be relayed to Feishu for remote approval.
-
-Channel protocol reference: https://code.claude.com/docs/en/channels-reference
 
 ## Reference implementation
 
