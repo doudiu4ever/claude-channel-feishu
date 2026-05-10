@@ -41,43 +41,16 @@ launch wrapper branches on `$CLAUDE_PLUGIN_ROOT`:
 Run `npm run build` before committing any `server.ts` change — the committed
 `dist/server.mjs` is what installed plugins actually execute.
 
-## Current state (v0.1.0)
+## Current state
 
-Done:
-- MCP server with `claude/channel` + `claude/channel/permission` capabilities
-- Feishu inbound via **long-connection** (`lark.WSClient`) — no public URL needed
-- Subscribes to `im.message.receive_v1`
-- `reply` tool: sends text back to a Feishu chat via `im.message.create`
-- Permission relay: outbound sends prompt to allowlisted users; inbound
-  `yes <id>` / `no <id>` parsed into verdict
-- Sender gating by `sender.sender_id.open_id` against `access.json`
-  (default location `~/.claude/channels/feishu/access.json`, auto-created)
-- Pairing flow: unauthorized senders receive a 6-char code; `pair` tool
-  claims the code and appends the open_id to `access.json`. Codes are
-  in-memory, 10-min TTL, one active code per open_id (new message replaces).
-- `configure` tool: accepts `app_id` / `app_secret`, writes them to
-  `~/.claude/channels/feishu/config.json` (0600) and starts the Feishu
-  WSClient in-process. No restart required on first configure.
-  `$FEISHU_APP_ID` + `$FEISHU_APP_SECRET` from the environment still
-  override the config file if set.
-- Packaged as a Claude Code plugin with a self-contained marketplace file,
-  so `/plugin marketplace add <this-repo>` + `/plugin install feishu@feishu-plugins`
-  works. Plugin mode runs a prebuilt esbuild bundle (`dist/server.mjs`) so
-  first launch is instant — no `npm install` in the hot path.
+Feature tracking lives in `ROADMAP.md` — read it when you need context on:
+- What's implemented and what's deferred (see "Implemented" / "Not yet implemented").
+- Priority order for picking up new work (see "Suggested ordering when work resumes").
+- Design notes for planned features (P0.1 notify, P0.2 slash commands, P0.3
+  mid-execution semantics, P1.5 group chat, P2.9 react/edit_message, etc.).
 
-- Interactive message cards for permission approval: Allow/Deny buttons
-  delivered via `msg_type: interactive`; click handled in-process through
-  the `card.action.trigger` callback registered on the same EventDispatcher
-  (long-connection, same WS as messages). Text fallback `yes/no <id>`
-  retained. Requires `card.action.trigger` subscribed under *回调订阅*
-  (separate tab from event subscription).
-
-- Image / file attachments (inbound + outbound)
-- Interactive message cards for admitting new senders after the bootstrap
-  admin is paired (currently text-only `pair <code>`)
-Deferred (add incrementally, keep parity with telegram channel):
-- Group chat @-mention handling
-- `react`, `edit_message` tools
+When the user asks "what's next" or "what's left", consult `ROADMAP.md` first —
+don't rely on stale in-conversation summaries.
 
 ## Runtime
 

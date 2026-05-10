@@ -5,8 +5,25 @@ Iteration plan for `claude-channel-feishu`, oriented around the primary use case
 long-lived development tasks** — the user wants to (a) check progress and (b)
 inject new instructions from Feishu while away from the terminal.
 
-This is a planning document. Items here are **not implemented**. Pick one off
-the top of a tier when starting work.
+---
+
+## Implemented
+
+- MCP server with `claude/channel` + `claude/channel/permission` capabilities
+- Feishu inbound via long-connection (`lark.WSClient`), `im.message.receive_v1`
+- `reply` tool (text + file attachments)
+- Permission relay with interactive Allow/Deny cards via `card.action.trigger`
+- Sender gating by `sender.sender_id.open_id` against `access.json`
+- Pairing flow: 6-char codes + interactive approval cards for admins
+- `configure` tool (credentials → `config.json`)
+- `download_attachment` tool
+- Image / file / audio / media attachment support (inbound + outbound)
+- Progress indicator: OK reaction + keepalive message after 20s
+- Packaged as a Claude Code marketplace plugin (`dist/server.mjs` bundle)
+
+## Not yet implemented
+
+Pick one off the top of a tier when starting work.
 
 ---
 
@@ -101,20 +118,11 @@ live — `pendingByChat` only tracks one entry per chat (`server.ts:139`).
 
 ## Tier P1 — richer interaction surface
 
-### 4. Inbound + outbound attachments
+### 4. Inbound + outbound attachments ✅
 
-Already on the deferred list in `CLAUDE.md`. Aligns with the long-task use
-case: send build logs, screenshots of failures, PDF reports back to Feishu;
-accept dropped log files / screenshots from the user as inbound context.
-
-- Outbound: extend `reply` with optional `attachments: [{ kind: 'image' |
-  'file', path: string }]`, or new `send_file` / `send_image` tools.
-  Use `im.message.create` with `msg_type: 'image'` / `'file'` after first
-  uploading via `im.file.create` / `im.image.create` to get the key.
-- Inbound: in `im.message.receive_v1`, detect `msg_type !== 'text'`, download
-  the attachment (call `im.message.resource.get`), save under
-  `~/.claude/channels/feishu/inbox/`, surface the local path in the channel
-  notification's text body so Claude can read it.
+Implemented. `reply` accepts file paths for outbound images/documents;
+inbound attachments are downloaded to `~/.claude/channels/feishu/inbox/`
+and surfaced via `image_path` / `file_path` in channel meta.
 
 ### 5. Group chat support with @-mention gating
 
@@ -171,9 +179,10 @@ approaches:
   share the same Feishu app but each takes a slice of `access.json`-routed
   chats. Needs careful design — defer until felt as pain.
 
-### 9. `react`, `edit_message`, `download_attachment` tools
+### 9. `react`, `edit_message` tools
 
-Listed in `CLAUDE.md` deferred list. Round out the Telegram-channel parity.
+`download_attachment` is already implemented. `react` (add emoji reaction
+to messages) and `edit_message` (patch previously-sent bot messages) remain.
 Lower priority than the items above.
 
 ### 10. Richer rendering
@@ -202,8 +211,9 @@ Lower priority than the items above.
 
 1. P0.1 (`notify` tool) — biggest user-visible win, smallest implementation.
 2. P0.2 (`/status` etc.) — pairs naturally with P0.1.
-3. P1.4 (attachments) — unlocks "send me the build log" workflows.
+3. P1.5 (group chat @-mention) — unlocks team workflows.
 4. P0.3 (mid-execution semantics) — do once you have real usage data.
-5. P1.6 (crash recovery) — once flow is otherwise smooth and you start
+5. P2.9 (`react` / `edit_message` tools) — round out Telegram parity.
+6. P1.6 (crash recovery) — once flow is otherwise smooth and you start
    hitting reliability limits.
-6. Everything else: opportunistic.
+7. Everything else: opportunistic.

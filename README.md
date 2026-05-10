@@ -65,6 +65,9 @@ In your Claude Code session, say:
 
 > "pair ABC123"
 
+Or, if an admin is already paired, they'll receive an interactive card with
+**Allow** / **Deny** buttons — one tap on Allow and the new user is in.
+
 Claude calls the `pair` tool, the bot DMs back "Paired.", and your `open_id` is appended to `~/.claude/channels/feishu/access.json`. Codes expire after 10 minutes.
 
 ## Using it
@@ -106,16 +109,33 @@ npm run build
 | `~/.claude/channels/feishu/config.json` | APP_ID / APP_SECRET (mode 0600, created by the `configure` tool) |
 | `~/.claude/channels/feishu/access.json` | Paired `open_id` allowlist (auto-created) |
 
+## Feishu backend setup
+
+1. Go to [Feishu Open Platform](https://open.feishu.cn) → **My Apps** → your self-built app.
+2. **Add Application Capabilities** → enable **Bot**.
+3. **Event and Callbacks**:
+   - **Event Subscription**: set to **Long Connection** mode, subscribe to `im.message.receive_v1`.
+   - **Callback Subscription** (separate tab): also set to **Long Connection** mode, subscribe to `card.action.trigger` — this powers the Allow/Deny buttons on interactive cards.
+4. **Permissions** (Scopes): add `im:message`, `im:message:send_as_bot`, `im:chat:readonly`.
+5. **Version Management** → **Publish** (changes only take effect after publishing).
+
+You'll also need the **App ID** (`cli_...`) and **App Secret** from the app's **Credentials and Basic Info** page.
+
 ## Status & limitations
 
-v0.1 is text-only. Not yet implemented:
+Currently implemented:
 
-- Image / file attachments (inbound + outbound).
-- Interactive message cards for permission approval and for admitting new senders after the bootstrap admin.
+- Text messages and image/file/audio/media attachments (inbound + outbound).
+- Interactive message cards for permission approval and pairing new senders.
+- `download_attachment` tool, paired with `reply` for sending files.
+- Progress indicator (OK reaction + keepalive message during long operations).
+
+Not yet implemented:
+
 - Group chat `@`-mention handling.
-- `react`, `edit_message`, `download_attachment` tools.
+- `react`, `edit_message` tools.
 
-See `CLAUDE.md` for architecture notes and the deferred list.
+See `ROADMAP.md` for the full feature plan and `CLAUDE.md` for architecture notes.
 
 ## License
 
