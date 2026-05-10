@@ -211,7 +211,7 @@ type Pending = {
 }
 const pendingByChat = new Map<string, Pending>()
 const KEEPALIVE_MS = 20_000
-const EYES_EMOJI = 'GLANCE'
+const PROGRESS_EMOJI = 'OK'
 
 function clearPending(chat_id: string): Pending | undefined {
   const p = pendingByChat.get(chat_id)
@@ -234,7 +234,7 @@ async function startProgress(chat_id: string, message_id: string) {
     client.im.messageReaction
       .create({
         path: { message_id },
-        data: { reaction_type: { emoji_type: EYES_EMOJI } },
+        data: { reaction_type: { emoji_type: PROGRESS_EMOJI } },
       })
       .then(r => {
         const rid = r.data?.reaction_id
