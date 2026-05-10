@@ -19,6 +19,7 @@ inject new instructions from Feishu while away from the terminal.
 - `download_attachment` tool
 - Image / file / audio / media attachment support (inbound + outbound)
 - `notify` tool: proactive progress reporting during long-running tasks
+- `react` tool: add emoji reactions to messages
 - Busy notification card when messages arrive mid-processing
 - Progress indicator: OK reaction + keepalive message after 20s
 - Packaged as a Claude Code marketplace plugin (`dist/server.mjs` bundle)
@@ -71,20 +72,6 @@ sender must be paired individually. For team workflows:
 - Optional: per-group access policy file (`access.json` extended with
   `allowGroups: [chat_id, ...]`).
 
-### 6. Crash / restart recovery
-
-If tmux session dies or the host reboots:
-
-- On startup, if `loadConfig()` succeeds and `access.json` has entries, send
-  each paired open_id a "Claude Code restarted at <time>. Last session was
-  <session_id>." card with buttons: **Resume**, **New session**, **Just
-  acknowledge**.
-- "Resume" → exec `claude --resume <last_session_id>` (or set an env signal
-  the launcher can pick up).
-- Persist last session_id to `~/.claude/channels/feishu/last_session.json`
-  on each successful turn (Claude side can call a `mark_session(id)` tool,
-  or we read it from `~/.claude/projects/.../sessions/`).
-
 ### 7. Offline message queue
 
 If Claude Code isn't running but Feishu messages still come in:
@@ -102,6 +89,13 @@ If Claude Code isn't running but Feishu messages still come in:
 ---
 
 ## Tier P2 — polish
+
+### 6. Crash / restart recovery (downgraded from P1)
+
+Downgraded: message delivery is lightweight — if a message is lost during
+restart, the user can just resend. Not worth the complexity of message-id
+deduplication or session tracking. The most useful piece (restart notification
+card) can be implemented opportunistically.
 
 ### 8. Multi-session routing
 
@@ -123,9 +117,9 @@ text becomes noticeable in real usage.
 
 ### 10. `react`, `edit_message` tools
 
-`download_attachment` is already implemented. `react` (add emoji reaction
-to messages) and `edit_message` (patch previously-sent bot messages) remain.
-Lower priority than the items above.
+`react` is implemented. `edit_message` remains — but Feishu `im.message.patch`
+only supports interactive cards, not text messages, so its utility is limited.
+Low priority.
 
 ### 10. Richer rendering
 
@@ -151,9 +145,6 @@ Lower priority than the items above.
 
 ## Suggested ordering when work resumes
 
-1. P1.5 (group chat @-mention) — unlocks team workflows.
-2. P2.9 (`react` / `edit_message` tools) — round out Telegram parity.
-3. P1.6 (crash recovery) — once flow is otherwise smooth and you start
-   hitting reliability limits.
-4. P2.9 (slash commands) — low urgency, natural language covers most cases.
-5. Everything else: opportunistic.
+1. P1.5 (group chat @-mention) — unlocks team workflows (de-prioritized by user request).
+2. P2.9 (`edit_message`) — limited utility; Feishu only allows patching interactive cards.
+3. Everything else: opportunistic.

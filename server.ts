@@ -340,6 +340,21 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'react',
+      description:
+        'Add an emoji reaction to a Feishu message. ' +
+        'Use this to acknowledge receipt or signal status without sending a full text reply. ' +
+        'Valid emoji types include: OK, THUMBSUP, HEART, SMILE, LAUGH, THINKING, DONE, CLAP, FIRE, and many more.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          message_id: { type: 'string', description: 'The message_id from the inbound channel meta' },
+          emoji_type: { type: 'string', description: 'Feishu emoji type, e.g. THUMBSUP, OK, HEART, SMILE' },
+        },
+        required: ['message_id', 'emoji_type'],
+      },
+    },
+    {
       name: 'pair',
       description:
         'Authorize a new Feishu sender using the 6-character pairing code they received. ' +
@@ -451,6 +466,18 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
       return { content: [{ type: 'text', text: `download failed for ${file_key}` }], isError: true }
     }
     return { content: [{ type: 'text', text: path }] }
+  }
+  if (req.params.name === 'react') {
+    const { message_id, emoji_type } = req.params.arguments as {
+      message_id: string; emoji_type: string
+    }
+    if (!client) throw new Error('feishu is not configured')
+    const res = await client.im.messageReaction.create({
+      path: { message_id },
+      data: { reaction_type: { emoji_type } },
+    })
+    const rid = res.data?.reaction_id ?? ''
+    return { content: [{ type: 'text', text: rid ? `reacted ${emoji_type} (${rid})` : `reacted ${emoji_type}` }] }
   }
   if (req.params.name === 'pair') {
     const { code } = req.params.arguments as { code: string }
