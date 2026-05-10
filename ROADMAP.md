@@ -19,6 +19,7 @@ inject new instructions from Feishu while away from the terminal.
 - `download_attachment` tool
 - Image / file / audio / media attachment support (inbound + outbound)
 - `notify` tool: proactive progress reporting during long-running tasks
+- Busy notification card when messages arrive mid-processing
 - Progress indicator: OK reaction + keepalive message after 20s
 - Packaged as a Claude Code marketplace plugin (`dist/server.mjs` bundle)
 
@@ -38,25 +39,16 @@ distinct from `reply`. Does not touch `pendingByChat` or `lastChatId`.
 
 ---
 
-### 2. Mid-execution inbound: queue vs interrupt semantics
+### 2. Mid-execution inbound: queue vs interrupt semantics ✅
 
-**Why**: if user DMs while Claude is mid-Bash, what happens? The channel
-notification fires, but Claude's tool loop won't see it until the current
-tool returns. Long Bash commands could delay delivery by minutes. Worse:
-the eyes reaction fires on message N+1 while message N's reaction is still
-live — `pendingByChat` only tracks one entry per chat (`server.ts:139`).
+Busy notification card implemented. When a message arrives while
+`pendingByChat` already has this chat, the bot immediately sends a
+"Message received. Claude is currently busy..." card. The actual
+message still flows through to Claude (no queueing/interrupt in the
+plugin layer — that's controlled by Claude's tool loop).
 
-**Shape**:
-- Verify actual behavior with a manual test (long `sleep 60 && echo done`
-  Bash, send Feishu mid-execution, observe).
-- Decide: queue messages (current implicit behavior) vs explicitly tell user
-  "Claude is busy, will see this in a moment."
-- If queueing: clean up `pendingByChat` to handle multiple in-flight
-  inbounds — switch from single `Pending` to a list keyed by message_id, or
-  reaction-only-on-first-of-burst.
-- Consider: forward an explicit "📥 message queued — Claude is busy with
-  Bash:..." card so the user knows their message arrived but isn't being
-  processed yet.
+Remaining polish: `pendingByChat` multi-message handling (currently
+overwrites previous entry per chat). Low urgency.
 
 ---
 
@@ -161,7 +153,7 @@ Lower priority than the items above.
 
 1. P1.5 (group chat @-mention) — unlocks team workflows.
 2. P2.9 (`react` / `edit_message` tools) — round out Telegram parity.
-3. P0.2 (mid-execution semantics) — do once you have real usage data.
-4. P1.6 (crash recovery) — once flow is otherwise smooth and you start
+3. P1.6 (crash recovery) — once flow is otherwise smooth and you start
    hitting reliability limits.
+4. P2.9 (slash commands) — low urgency, natural language covers most cases.
 5. Everything else: opportunistic.
