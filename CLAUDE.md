@@ -72,12 +72,12 @@ Done:
   retained. Requires `card.action.trigger` subscribed under *回调订阅*
   (separate tab from event subscription).
 
-Deferred (add incrementally, keep parity with telegram channel):
 - Image / file attachments (inbound + outbound)
 - Interactive message cards for admitting new senders after the bootstrap
   admin is paired (currently text-only `pair <code>`)
+Deferred (add incrementally, keep parity with telegram channel):
 - Group chat @-mention handling
-- `react`, `edit_message`, `download_attachment` tools
+- `react`, `edit_message` tools
 
 ## Runtime
 
