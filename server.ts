@@ -175,15 +175,14 @@ const mcp = new Server(
       'Channel message (<channel> tag) → reply(chat_id, answer), echo "→ feishu: answer". ' +
       'Terminal message → reply("终端: question"), then reply(answer). ' +
       'Skipping reply = Feishu user sees nothing. No exceptions. ' +
+      'The reply tool returns the exact echo text (starting with "→ feishu:"). ' +
+      'Your terminal output MUST be the literal text returned by the reply tool — do not paraphrase or shorten it. ' +
       'Attachments: inbound image/file events include image_path/file_path in meta — Read them directly. ' +
       'Use download_attachment(message_id, file_key, type) to fetch resources on demand. ' +
       'To send files, pass absolute paths in the reply files parameter. ' +
       'If the user has not yet configured Feishu credentials, ask them for FEISHU_APP_ID ' +
       '(starts with "cli_") and FEISHU_APP_SECRET, then call the configure tool. ' +
-      'If the user says they have a pairing code (e.g., "pair ABC123"), call the pair tool. ' +
-      'CONSISTENCY: when you echo "→ feishu: answer" in the terminal, the echoed text ' +
-      'MUST be verbatim identical to the reply text you sent — no summarizing, no extra ' +
-      'detail. Both sides see the same message, always.',
+      'If the user says they have a pairing code (e.g., "pair ABC123"), call the pair tool.',
   },
 )
 
@@ -465,8 +464,10 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
       }
     }
 
-    const summary = results.length > 0 ? `sent: ${args.text}\n${results.join('\n')}` : `sent: ${args.text}`
-    return { content: [{ type: 'text', text: summary }] }
+    const echo = `→ feishu: ${args.text}`
+    const failures = results.filter(r => r.startsWith('skipped') || r.startsWith('failed'))
+    for (const r of failures) stderrLogger.error(`reply attachment: ${r}`)
+    return { content: failures.length > 0 ? [{ type: 'text', text: echo }, { type: 'text', text: failures.join('; ') }] : [{ type: 'text', text: echo }] }
   }
   if (req.params.name === 'notify') {
     const { chat_id, text, kind } = req.params.arguments as {

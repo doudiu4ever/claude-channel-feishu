@@ -21,6 +21,7 @@ inject new instructions from Feishu while away from the terminal.
 - `notify` tool: proactive progress reporting during long-running tasks
 - `react` tool: add emoji reactions to messages
 - Rich text rendering: auto-upgrade reply to interactive card for code blocks
+- Reply echo enforcement: tool returns exact "→ feishu:" text for consistent terminal output
 - Busy notification card when messages arrive mid-processing
 - Progress indicator: OK reaction + keepalive message after 20s
 - Packaged as a Claude Code marketplace plugin (`dist/server.mjs` bundle)
