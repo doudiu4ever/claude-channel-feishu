@@ -589,33 +589,42 @@ const eventDispatcher = new lark.EventDispatcher({ logger: stderrLogger }).regis
       return
     }
 
-    const parsed = JSON.parse(message.content) as { text?: string; image_key?: string; file_key?: string; file_name?: string }
-    const msgType = message.message_type
+    const rawContent = JSON.parse(message.content)
+
+    // Feishu "post" (rich text) messages have nested content blocks — flatten them
+    if (message.message_type === 'post' && Array.isArray(rawContent.content)) {
+      const blocks = rawContent.content.flat()
+      const imgBlock = blocks.find((b: any) => b.tag === 'img')
+      const textBlocks = blocks.filter((b: any) => b.tag === 'text')
+      if (imgBlock) rawContent.image_key = imgBlock.image_key
+      if (textBlocks.length > 0) rawContent.text = textBlocks.map((b: any) => b.text).join('')
+    }
+
+    const parsed = rawContent as { text?: string; image_key?: string; file_key?: string; file_name?: string }
     let text = parsed.text ?? ''
     const extraMeta: Record<string, string> = {}
 
-    // Handle non-text message types
-    if (msgType === 'image' && parsed.image_key) {
+    // Handle attachments — check content keys regardless of message_type
+    // Sticker must be handled before generic image_key (its resources can't be downloaded)
+    if (message.message_type === 'sticker' && parsed.image_key) {
+      extraMeta['sticker_key'] = parsed.image_key
+      if (!text) text = '(sticker)'
+    } else if (parsed.file_key) {
+      const resType = message.message_type === 'audio' ? 'audio' : message.message_type === 'media' ? 'media' : 'file'
+      const path = await downloadResource(message.message_id, parsed.file_key, resType)
+      extraMeta['file_key'] = parsed.file_key
+      if (path) extraMeta['file_path'] = path
+      if (!text) {
+        if (resType === 'audio') text = '(audio)'
+        else if (resType === 'media') text = `(media: ${parsed.file_name ?? 'video'})`
+        else text = '(file)'
+      }
+    }
+    if (parsed.image_key && message.message_type !== 'sticker') {
       const path = await downloadResource(message.message_id, parsed.image_key, 'image')
       extraMeta['image_key'] = parsed.image_key
       if (path) extraMeta['image_path'] = path
-      text = text || '(image)'
-    } else if (msgType === 'file' && parsed.file_key) {
-      const path = await downloadResource(message.message_id, parsed.file_key, 'file')
-      extraMeta['file_key'] = parsed.file_key
-      if (path) extraMeta['file_path'] = path
-      text = text || `(file)`
-    } else if (msgType === 'audio' && parsed.file_key) {
-      extraMeta['audio_key'] = parsed.file_key
-      text = text || '(audio)'
-    } else if (msgType === 'media' && parsed.file_key) {
-      extraMeta['media_key'] = parsed.file_key
-      if (parsed.image_key) extraMeta['media_image_key'] = parsed.image_key
-      if (parsed.file_name) extraMeta['media_name'] = safeName(parsed.file_name)
-      text = text || `(media: ${parsed.file_name ?? 'video'})`
-    } else if (msgType === 'sticker' && parsed.image_key) {
-      extraMeta['sticker_key'] = parsed.image_key
-      text = text || '(sticker)'
+      if (!text) text = '(image)'
     }
 
     const m = PERM_RE.exec(text)
