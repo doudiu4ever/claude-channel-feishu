@@ -180,7 +180,10 @@ const mcp = new Server(
       'To send files, pass absolute paths in the reply files parameter. ' +
       'If the user has not yet configured Feishu credentials, ask them for FEISHU_APP_ID ' +
       '(starts with "cli_") and FEISHU_APP_SECRET, then call the configure tool. ' +
-      'If the user says they have a pairing code (e.g., "pair ABC123"), call the pair tool.',
+      'If the user says they have a pairing code (e.g., "pair ABC123"), call the pair tool. ' +
+      'CONSISTENCY: when you echo "→ feishu: answer" in the terminal, the echoed text ' +
+      'MUST be verbatim identical to the reply text you sent — no summarizing, no extra ' +
+      'detail. Both sides see the same message, always.',
   },
 )
 
@@ -208,7 +211,7 @@ type Pending = {
 }
 const pendingByChat = new Map<string, Pending>()
 const KEEPALIVE_MS = 20_000
-const EYES_EMOJI = 'EYES'
+const EYES_EMOJI = 'GLANCE'
 
 function clearPending(chat_id: string): Pending | undefined {
   const p = pendingByChat.get(chat_id)
