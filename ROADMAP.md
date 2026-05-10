@@ -20,6 +20,7 @@ inject new instructions from Feishu while away from the terminal.
 - Image / file / audio / media attachment support (inbound + outbound)
 - `notify` tool: proactive progress reporting during long-running tasks
 - `react` tool: add emoji reactions to messages
+- Rich text rendering: auto-upgrade reply to interactive card for code blocks
 - Busy notification card when messages arrive mid-processing
 - Progress indicator: OK reaction + keepalive message after 20s
 - Packaged as a Claude Code marketplace plugin (`dist/server.mjs` bundle)
@@ -121,13 +122,11 @@ text becomes noticeable in real usage.
 only supports interactive cards, not text messages, so its utility is limited.
 Low priority.
 
-### 10. Richer rendering
+### 10. Richer rendering ✅
 
-- Default text replies use `msg_type: 'text'`. For long answers with code,
-  switch to `msg_type: 'interactive'` with `lark_md` so code blocks render
-  properly on mobile.
-- Threshold: auto-upgrade to card when reply contains ` ``` ` or exceeds
-  some length.
+Implemented. `sendRichText` auto-detects code blocks (```) or text > 500 chars
+and upgrades from `msg_type: 'text'` to `msg_type: 'interactive'` with `lark_md`
+rendering.
 
 ---
 

@@ -199,6 +199,33 @@ async function sendText(chat_id: string, text: string) {
   })
 }
 
+const CODE_BLOCK_RE = /```/
+const RICH_THRESHOLD = 500
+
+function hasRichContent(text: string) {
+  return CODE_BLOCK_RE.test(text) || text.length > RICH_THRESHOLD
+}
+
+async function sendRichText(chat_id: string, text: string) {
+  if (!client) throw new Error('feishu is not configured')
+  if (!hasRichContent(text)) {
+    return sendText(chat_id, text)
+  }
+  const card = {
+    config: { wide_screen_mode: true },
+    header: { template: 'grey', title: { tag: 'plain_text', content: 'Reply' } },
+    elements: [{ tag: 'div', text: { tag: 'lark_md', content: text } }],
+  }
+  return client.im.message.create({
+    params: { receive_id_type: 'chat_id' },
+    data: {
+      receive_id: chat_id,
+      msg_type: 'interactive',
+      content: JSON.stringify(card),
+    },
+  })
+}
+
 // Per-chat progress state. While Claude is thinking, we tag the user's
 // inbound message with an eyes reaction and — if Claude takes too long —
 // post a "still working" placeholder that the reply tool later rewrites
@@ -283,7 +310,7 @@ async function finishProgress(chat_id: string, text: string) {
       .catch(() => {})
   }
 
-  await sendText(chat_id, text)
+  await sendRichText(chat_id, text)
 }
 
 mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
