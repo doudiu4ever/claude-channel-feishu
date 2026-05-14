@@ -1,5 +1,7 @@
 # claude-channel-feishu
 
+[中文文档](README_CN.md)
+
 Connect a Feishu (Lark) bot to your Claude Code session.
 
 Inbound messages from the bot arrive in the Claude Code terminal as channel
@@ -11,7 +13,7 @@ also be relayed to Feishu so you approve them remotely from your phone.
 ## Prerequisites
 
 - **Node 18+** (the server runs on `tsx`).
-- **Feishu 自建应用** with:
+- **Feishu self-built app** with:
   - Bot capability enabled.
   - **Event** subscription set to **long connection** (no public URL required), subscribed to `im.message.receive_v1`.
   - **Callback** subscription (a separate tab under *Events and Callbacks*) also set to **long connection**, subscribed to `card.action.trigger` — this is what powers the Allow/Deny buttons for permission prompts. Without it the cards show error 200340 when tapped.
