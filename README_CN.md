@@ -13,6 +13,7 @@
   - 已开启**机器人**能力。
   - **事件**订阅设为**长连接**模式（无需公网地址），已订阅 `im.message.receive_v1`。
   - **回调**订阅（在「事件与回调」的独立标签页下）也设为**长连接**模式，已订阅 `card.action.trigger` —— 这是权限提示卡片中允许/拒绝按钮的驱动机制。缺少此项，点击卡片会报错 200340。
+  - （可选，群聊支持需要）同时订阅 `im.chat.member.bot.added_v1` —— 机器人被加入新群时给 admin 发送审批卡片所必需。
   - 权限范围（Scopes）：`im:message`、`im:message:send_as_bot`、`im:chat:readonly`。
   - 已发布一个**正式版本**（开发者后台的修改只有发布后才会生效）。
 
@@ -74,6 +75,21 @@ Claude 调用 `pair` 工具后，机器人会私信 "Paired."，你的 `open_id`
 - **私信机器人** → 消息以 `<channel source="feishu" ...>` 事件的形式出现在终端中，Claude 可以调用 `reply` 工具回复。
 - **权限转发** —— 若 Claude 尝试运行需要审批的工具（如 `Bash`），提示会以带**允许** / **拒绝**按钮的交互卡片形式转发给白名单用户。点击按钮即可将结果返回给 Claude，无需操作终端。也可用文字 `yes <id>` / `no <id>` 作为备用方式。
 
+## 群聊
+
+机器人也支持群聊，采用**双重门禁**保证安全：消息只有在**三个条件同时满足**时才会被处理 —— 群在 `allowGroups`、发送人在 `allowFrom`、且机器人被 **@-提及**。任何一项不满足均静默忽略（群里不会出现配对码刷屏）。
+
+配置流程：
+
+1. 把机器人拉进飞书群聊。机器人会私信每个 admin 一张带群 `chat_id` 的允许/拒绝审批卡。
+2. 点击**允许** → 该 `chat_id` 写入 `~/.claude/channels/feishu/access.json` 的 `allowGroups` 字段。
+3. 群里尚未配对的成员需要**先私信机器人**走标准配对流程 —— 群里会静默忽略未授权成员，不会有任何提示。
+4. 已配对成员在群里 `@机器人 <消息内容>` 即可与 Claude 对话；不被 @ 时机器人会忽略。
+
+如果错过了审批卡，或想手动授权，可在终端让 Claude 调用：`pair_group oc_xxxxxxx`。
+
+需开启飞书后台 `im.chat.member.bot.added_v1` 事件订阅（见上文「前置条件」）。
+
 ## 开发模式
 
 如果你想在本地修改插件，而不是通过安装方式使用：
@@ -111,7 +127,7 @@ npm run build
 1. 前往[飞书开放平台](https://open.feishu.cn) → **我的应用** → 选择你的自建应用。
 2. **添加应用能力** → 开启**机器人**。
 3. **事件与回调**：
-   - **事件订阅**：设为**长连接**模式，订阅 `im.message.receive_v1`。
+   - **事件订阅**：设为**长连接**模式，订阅 `im.message.receive_v1`。如需群聊支持，再订阅 `im.chat.member.bot.added_v1`。
    - **回调订阅**（独立标签页）：也设为**长连接**模式，订阅 `card.action.trigger` —— 这是交互卡片允许/拒绝按钮的驱动机制。
 4. **权限管理**（Scopes）：添加 `im:message`、`im:message:send_as_bot`、`im:chat:readonly`。
 5. **版本管理** → **发布**（修改只有发布后才会生效）。
@@ -129,8 +145,8 @@ npm run build
 
 尚未实现：
 
-- 群聊 `@` 提及处理。
-- `react`、`edit_message` 工具。
+- `edit_message` 工具（飞书仅允许对交互卡片做 patch，文本不行）。
+- 离线消息队列（机器人仅在 Claude Code 运行期间接收消息）。
 
 完整功能规划见 `ROADMAP.md`，架构说明见 `CLAUDE.md`。
 

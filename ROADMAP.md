@@ -24,6 +24,7 @@ inject new instructions from Feishu while away from the terminal.
 - Reply echo enforcement: tool returns exact "→ feishu:" text for consistent terminal output
 - Busy notification card when messages arrive mid-processing
 - Progress indicator: OK reaction + keepalive message after 20s
+- Group chat support: dual-gate (`allowGroups` + `allowFrom`), @-mention required, bot.added approval card, `pair_group` tool
 - Packaged as a Claude Code marketplace plugin (`dist/server.mjs` bundle)
 
 ## Not yet implemented
@@ -63,16 +64,20 @@ Implemented. `reply` accepts file paths for outbound images/documents;
 inbound attachments are downloaded to `~/.claude/channels/feishu/inbox/`
 and surfaced via `image_path` / `file_path` in channel meta.
 
-### 5. Group chat support with @-mention gating
+### 5. Group chat support with @-mention gating ✅
 
-Today, `access.json` gates by sender open_id, so groups "work" but every
-sender must be paired individually. For team workflows:
+Implemented with **dual gate**: a group message is processed only if
+`chat_id ∈ allowGroups` AND `sender open_id ∈ allowFrom` AND the bot is
+@-mentioned (`message.mentions[].id.open_id === BOT_OPEN_ID`). All
+failures are silent — groups never get spammed with pairing codes or
+"not authorized" replies.
 
-- Detect group messages (`chat_type === 'group'` on the message event).
-- In groups, only respond when bot is @-mentioned (parse mentions from
-  `event.message.mentions[]`).
-- Optional: per-group access policy file (`access.json` extended with
-  `allowGroups: [chat_id, ...]`).
+- Bot's own `open_id` resolved at startup via `bot/v3/info`.
+- `im.chat.member.bot.added_v1` event triggers an Allow/Deny card DM'd
+  to every admin in `allowFrom`. Allow writes `chat_id` into
+  `allowGroups`.
+- `pair_group(chat_id)` MCP tool as a manual escape hatch.
+- Group requires new Feishu event subscription: `im.chat.member.bot.added_v1`.
 
 ### 7. Offline message queue
 
@@ -145,6 +150,6 @@ rendering.
 
 ## Suggested ordering when work resumes
 
-1. P1.5 (group chat @-mention) — unlocks team workflows (de-prioritized by user request).
-2. P2.9 (`edit_message`) — limited utility; Feishu only allows patching interactive cards.
+1. P2.9 (`edit_message`) — limited utility; Feishu only allows patching interactive cards.
+2. P1.7 (offline message queue) — only matters if the AFK-instruction use case becomes painful.
 3. Everything else: opportunistic.

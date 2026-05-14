@@ -45,6 +45,25 @@ function saveConfig(cfg: Config) {
 let client: lark.Client | null = null
 let wsClient: lark.WSClient | null = null
 let lastChatId: string | null = null
+let botOpenId: string | null = null
+
+async function resolveBotIdentity() {
+  if (!client) return
+  try {
+    const res = await client.request<{ bot?: { open_id?: string; app_name?: string } }>({
+      method: 'GET',
+      url: '/open-apis/bot/v3/info',
+    })
+    botOpenId = res.bot?.open_id ?? null
+    if (botOpenId) {
+      stderrLogger.info(`bot open_id resolved: ${botOpenId} (${res.bot?.app_name ?? '?'})`)
+    } else {
+      stderrLogger.warn('bot/v3/info returned no open_id; group @-mention detection disabled')
+    }
+  } catch (e) {
+    stderrLogger.error('bot/v3/info failed:', String(e))
+  }
+}
 
 // Feishu SDK defaults to stdout for info logs — but stdout is the MCP
 // JSON-RPC stream, so any non-protocol write corrupts it and Claude drops
@@ -57,14 +76,18 @@ const stderrLogger = {
   trace: () => {},
 }
 
-type Access = { allowFrom: string[] }
+type Access = { allowFrom: string[]; allowGroups: string[] }
 const saveAccess = (access: Access) => {
   mkdirSync(dirname(ACCESS_FILE), { recursive: true })
   writeFileSync(ACCESS_FILE, JSON.stringify(access, null, 2) + '\n')
 }
 const loadAccess = (): Access => {
-  if (!existsSync(ACCESS_FILE)) saveAccess({ allowFrom: [] })
-  return JSON.parse(readFileSync(ACCESS_FILE, 'utf8'))
+  if (!existsSync(ACCESS_FILE)) saveAccess({ allowFrom: [], allowGroups: [] })
+  const raw = JSON.parse(readFileSync(ACCESS_FILE, 'utf8')) as Partial<Access>
+  return {
+    allowFrom: raw.allowFrom ?? [],
+    allowGroups: raw.allowGroups ?? [],
+  }
 }
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
@@ -394,6 +417,20 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'pair_group',
+      description:
+        'Authorize a Feishu group chat so the bot responds to @-mentions from paired users in it. ' +
+        'Call when the user says things like "pair_group oc_xxx" or "allow group oc_xxx". ' +
+        'Manual alternative to the approval card sent when the bot is added to a new group.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          chat_id: { type: 'string', description: 'The group chat_id (starts with oc_)' },
+        },
+        required: ['chat_id'],
+      },
+    },
+    {
       name: 'configure',
       description:
         'Save Feishu app credentials and start the bot. Call when the user provides ' +
@@ -523,6 +560,32 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
     }
     await sendText(entry.chat_id, 'Paired. You can now talk to the assistant.')
     return { content: [{ type: 'text', text: `paired ${entry.open_id}` }] }
+  }
+  if (req.params.name === 'pair_group') {
+    const { chat_id } = req.params.arguments as { chat_id: string }
+    const gid = chat_id.trim()
+    if (!gid) {
+      return { content: [{ type: 'text', text: 'chat_id is required' }], isError: true }
+    }
+    const access = loadAccess()
+    if (access.allowGroups.includes(gid)) {
+      return { content: [{ type: 'text', text: `group ${gid} already authorized` }] }
+    }
+    access.allowGroups.push(gid)
+    saveAccess(access)
+    if (client) {
+      client.im.message
+        .create({
+          params: { receive_id_type: 'chat_id' },
+          data: {
+            receive_id: gid,
+            msg_type: 'text',
+            content: JSON.stringify({ text: 'Group authorized. Paired users can @-mention me here.' }),
+          },
+        })
+        .catch(e => stderrLogger.error('pair_group notify failed', String(e)))
+    }
+    return { content: [{ type: 'text', text: `authorized group ${gid}` }] }
   }
   if (req.params.name === 'configure') {
     const { app_id, app_secret } = req.params.arguments as {
@@ -655,6 +718,73 @@ function buildPairCard(code: string, open_id: string) {
   }
 }
 
+function buildGroupApprovalCard(chat_id: string, chat_name: string, operator_open_id: string) {
+  const safeName = chat_name || '(unnamed group)'
+  return {
+    config: { wide_screen_mode: true },
+    header: {
+      template: 'orange',
+      title: { tag: 'plain_text', content: 'Bot added to a new group' },
+    },
+    elements: [
+      {
+        tag: 'div',
+        text: {
+          tag: 'lark_md',
+          content:
+            `Group: **${safeName}**\n` +
+            `chat_id: \`${chat_id}\`\n` +
+            `Added by: \`${operator_open_id || 'unknown'}\`\n\n` +
+            `Allow the bot to respond to @-mentions from paired users in this group?`,
+        },
+      },
+      {
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: 'Allow' },
+            type: 'primary',
+            value: { gid: chat_id, d: 'allow' },
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: 'Deny' },
+            type: 'danger',
+            value: { gid: chat_id, d: 'deny' },
+          },
+        ],
+      },
+    ],
+  }
+}
+
+async function sendGroupApprovalCardToAdmins(chat_id: string, chat_name: string, operator_open_id: string) {
+  if (!client) return
+  const access = loadAccess()
+  if (access.allowGroups.includes(chat_id)) {
+    stderrLogger.info(`group ${chat_id} already in allowGroups, skipping approval card`)
+    return
+  }
+  if (access.allowFrom.length === 0) {
+    stderrLogger.info('sendGroupApprovalCardToAdmins: no admins in access.json, skipping card')
+    return
+  }
+  const card = buildGroupApprovalCard(chat_id, chat_name, operator_open_id)
+  for (const open_id of access.allowFrom) {
+    client.im.message
+      .create({
+        params: { receive_id_type: 'open_id' },
+        data: {
+          receive_id: open_id,
+          msg_type: 'interactive',
+          content: JSON.stringify(card),
+        },
+      })
+      .catch(e => stderrLogger.error('sendGroupApprovalCardToAdmins failed for', open_id, String(e)))
+  }
+}
+
 function buildNotifyCard(kind: string, text: string) {
   const templates: Record<string, string> = { status: 'grey', milestone: 'blue', warning: 'yellow' }
   const labels: Record<string, string> = { status: 'Status', milestone: 'Milestone', warning: 'Warning' }
@@ -734,16 +864,46 @@ mcp.setNotificationHandler(PermissionRequestSchema, async ({ params }) => {
 const PERM_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
 
 const eventDispatcher = new lark.EventDispatcher({ logger: stderrLogger }).register({
+  'im.chat.member.bot.added_v1': async data => {
+    const { chat_id, name, operator_id } = data as {
+      chat_id?: string
+      name?: string
+      operator_id?: { open_id?: string }
+    }
+    if (!chat_id) return
+    stderrLogger.info(`bot added to chat ${chat_id} (${name ?? '?'}) by ${operator_id?.open_id ?? '?'}`)
+    await sendGroupApprovalCardToAdmins(chat_id, name ?? '', operator_id?.open_id ?? '')
+  },
   'im.message.receive_v1': async data => {
     const { message, sender } = data as {
-      message: { chat_id: string; message_id: string; content: string; message_type: string }
+      message: {
+        chat_id: string
+        message_id: string
+        content: string
+        message_type: string
+        chat_type?: string
+        mentions?: Array<{ key: string; id?: { open_id?: string }; name?: string }>
+      }
       sender: { sender_id?: { open_id?: string } }
     }
     const access = loadAccess()
     const open_id = sender.sender_id?.open_id ?? ''
     if (!open_id) return
 
-    if (!access.allowFrom.includes(open_id)) {
+    const isGroup = message.chat_type === 'group'
+
+    if (isGroup) {
+      // Dual gate: group must be allowlisted AND sender must be paired AND bot must be @-mentioned.
+      // All failures are silent to keep groups quiet.
+      if (!access.allowGroups.includes(message.chat_id)) return
+      if (!access.allowFrom.includes(open_id)) return
+      if (!botOpenId) {
+        stderrLogger.warn(`group message in ${message.chat_id} but bot open_id not yet resolved; ignoring`)
+        return
+      }
+      const mentions = message.mentions ?? []
+      if (!mentions.some(m => m.id?.open_id === botOpenId)) return
+    } else if (!access.allowFrom.includes(open_id)) {
       const code = issuePairCode(open_id, message.chat_id)
       await sendText(
         message.chat_id,
@@ -792,6 +952,15 @@ const eventDispatcher = new lark.EventDispatcher({ logger: stderrLogger }).regis
       extraMeta['image_key'] = parsed.image_key
       if (path) extraMeta['image_path'] = path
       if (!text) text = '(image)'
+    }
+
+    // In groups, strip the @bot placeholder (Feishu emits literal "@_user_N" in text where
+    // mentions[].key matches) so Claude sees just the user's words.
+    if (isGroup && botOpenId) {
+      const botMention = (message.mentions ?? []).find(m => m.id?.open_id === botOpenId)
+      if (botMention?.key) {
+        text = text.split(botMention.key).join('').replace(/\s+/g, ' ').trim()
+      }
     }
 
     const m = PERM_RE.exec(text)
@@ -859,6 +1028,40 @@ const eventDispatcher = new lark.EventDispatcher({ logger: stderrLogger }).regis
     const pairingCode = value['code']
     const bid = value['bid']
     const rid = value['rid']
+    const gid = value['gid']
+
+    // Group approval card: allow/deny a group
+    if (gid) {
+      if (decision === 'allow') {
+        try {
+          const updated = loadAccess()
+          if (!updated.allowGroups.includes(gid)) {
+            updated.allowGroups.push(gid)
+            saveAccess(updated)
+          }
+        } catch (e) {
+          stderrLogger.error('group approval saveAccess failed', String(e))
+          return { toast: { type: 'error', content: 'Approval failed.' } }
+        }
+        // Best-effort heads-up in the group itself so paired users know they can now @ the bot.
+        if (client) {
+          client.im.message
+            .create({
+              params: { receive_id_type: 'chat_id' },
+              data: {
+                receive_id: gid,
+                msg_type: 'text',
+                content: JSON.stringify({ text: 'Group authorized. Paired users can @-mention me here.' }),
+              },
+            })
+            .catch(e => stderrLogger.error('group approval notify failed', String(e)))
+        }
+        return { toast: { type: 'success', content: 'Group authorized.' } }
+      }
+      if (decision === 'deny') {
+        return { toast: { type: 'warning', content: 'Group denied.' } }
+      }
+    }
 
     // Pairing card: approve/deny a new user
     if (pairingCode) {
@@ -962,6 +1165,7 @@ function startFeishu(cfg: Config) {
   client = new lark.Client(opts)
   wsClient = new lark.WSClient(opts)
   wsClient.start({ eventDispatcher })
+  void resolveBotIdentity()
 }
 
 const initialConfig = loadConfig()

@@ -73,6 +73,17 @@ target local files if/when more files are added.
    public endpoint, no ngrok.
 4. Send API takes `receive_id_type` as a separate `params` object, not mixed
    into the body.
+5. **Group chat = dual gate**: `chat_type === 'group'` requires
+   `chat_id ∈ allowGroups` **and** `open_id ∈ allowFrom` **and** bot is
+   @-mentioned. All failures must be silent — never reply unauthorized
+   prompts in a group (would spam the group and leak pairing codes).
+6. **Bot's own `open_id`** is resolved at startup via `client.request({url:
+   '/open-apis/bot/v3/info'})` and cached as `botOpenId`. Needed to match
+   `message.mentions[].id.open_id` against ourselves. If resolution fails
+   (network blip at startup), group messages get silently ignored until
+   restart — degrade, don't crash.
+7. In groups, strip the `@_user_N` placeholder from message text using
+   `mentions[].key` so Claude doesn't see `@_user_1 do X` — just `do X`.
 
 ## Prereqs the user owns (not code concerns)
 

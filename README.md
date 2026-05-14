@@ -17,6 +17,7 @@ also be relayed to Feishu so you approve them remotely from your phone.
   - Bot capability enabled.
   - **Event** subscription set to **long connection** (no public URL required), subscribed to `im.message.receive_v1`.
   - **Callback** subscription (a separate tab under *Events and Callbacks*) also set to **long connection**, subscribed to `card.action.trigger` — this is what powers the Allow/Deny buttons for permission prompts. Without it the cards show error 200340 when tapped.
+  - (Optional, for group chat support) Also subscribe to `im.chat.member.bot.added_v1` — required so the bot can DM admins an approval card when added to a new group.
   - Scopes: `im:message`, `im:message:send_as_bot`, `im:chat:readonly`.
   - A **released** version (changes in the developer console take effect only after publishing).
 
@@ -79,6 +80,21 @@ Once configured and paired:
 - **DM the bot** → the message appears in your terminal as a `<channel source="feishu" ...>` event. Claude can respond by calling the `reply` tool.
 - **Permission relay** — if Claude tries to run a tool that needs approval (e.g. `Bash`), the prompt is forwarded to allowlisted Feishu users as an interactive card with **Allow** / **Deny** buttons. Tap one and the verdict goes back to Claude without touching the terminal. Text fallback `yes <id>` / `no <id>` still works.
 
+## Group chat
+
+The bot can also operate in group chats, with a **dual gate** for safety: a message is only processed when **all three** are true — the group is in `allowGroups`, the sender is in `allowFrom`, and the bot is **@-mentioned**. Any failure is silent (no pairing-code spam in groups).
+
+Setup flow:
+
+1. Add the bot to a Feishu group. The bot DMs every admin an Allow/Deny approval card with the group's `chat_id`.
+2. Tap **Allow** → the `chat_id` is appended to `~/.claude/channels/feishu/access.json` under `allowGroups`.
+3. Group members who haven't paired yet must first **DM the bot** to go through the standard pairing flow — silent ignore in groups means there's no in-group prompt.
+4. In the group, paired users `@bot <message>` to talk to Claude; the bot ignores any non-mention messages.
+
+If you missed the approval card or want to authorize manually, ask Claude in the terminal: `pair_group oc_xxxxxxx`.
+
+Requires the `im.chat.member.bot.added_v1` event subscription (see Prerequisites).
+
 ## Development mode
 
 If you want to hack on the plugin locally instead of installing it:
@@ -116,7 +132,7 @@ npm run build
 1. Go to [Feishu Open Platform](https://open.feishu.cn) → **My Apps** → your self-built app.
 2. **Add Application Capabilities** → enable **Bot**.
 3. **Event and Callbacks**:
-   - **Event Subscription**: set to **Long Connection** mode, subscribe to `im.message.receive_v1`.
+   - **Event Subscription**: set to **Long Connection** mode, subscribe to `im.message.receive_v1`. For group support, also subscribe to `im.chat.member.bot.added_v1`.
    - **Callback Subscription** (separate tab): also set to **Long Connection** mode, subscribe to `card.action.trigger` — this powers the Allow/Deny buttons on interactive cards.
 4. **Permissions** (Scopes): add `im:message`, `im:message:send_as_bot`, `im:chat:readonly`.
 5. **Version Management** → **Publish** (changes only take effect after publishing).
@@ -134,8 +150,8 @@ Currently implemented:
 
 Not yet implemented:
 
-- Group chat `@`-mention handling.
-- `react`, `edit_message` tools.
+- `edit_message` tool (Feishu only allows patching interactive cards).
+- Offline message queue (bot only receives while Claude Code is running).
 
 See `ROADMAP.md` for the full feature plan and `CLAUDE.md` for architecture notes.
 
